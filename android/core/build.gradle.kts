@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     kotlin("jvm") version "2.0.21"
+    kotlin("plugin.serialization") version "2.0.21"
 }
 
 // Deliberately NOT using jvmToolchain(17): that makes the build fail outright on a machine
@@ -20,6 +21,11 @@ kotlin {
 }
 
 dependencies {
+    // The categorisation rules live in an editable JSON file rather than in code, so the
+    // user can add a vendor keyword without a rebuild. Same file shape as the desktop app's
+    // config/categories.json, so the two stay interchangeable.
+    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
     testImplementation(kotlin("test"))
 }
 
