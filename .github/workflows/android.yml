@@ -132,12 +132,20 @@ jobs:
 
       # Attaching to a release gives a URL that can be opened directly on the phone,
       # which is the whole point of a sideloaded build.
-      # Creates the release if the tag does not already have one, so pushing a tag is all
-      # that is needed to produce a public, phone-installable download link.
+      # An Actions artifact is a login-gated zip, so it cannot be installed from a phone.
+      # A release asset is a plain public URL that can. The action creates the tag and the
+      # release itself, which matters because the environment this was developed in cannot
+      # push tags; a branch push has to be enough to produce a downloadable build.
+      #
+      # Non-tag builds all reuse the `sideload-latest` tag, so the release is updated in
+      # place and the download link stays the same instead of accumulating one release per
+      # commit.
       - name: Publish APK to a release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+        if: github.event_name == 'push' || github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'sideload-latest' }}
+          name: Gohil Bookkeeper — sideload build
           files: android/app/build/outputs/apk/release/*.apk
           generate_release_notes: false
           body: |
