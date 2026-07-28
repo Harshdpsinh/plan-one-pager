@@ -228,6 +228,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
             val notes = mutableListOf<String>()
 
+            // Rows with nowhere to go must be announced, not dropped. Processing a sale
+            // invoice with only the Purchase Register configured used to end with a cheerful
+            // summary that never mentioned the sales rows, so the run looked complete while
+            // the invoice had gone nowhere.
+            if (purchaseRows.isNotEmpty() &&
+                (current.purchaseWorkbook == null || current.purchaseTab.isBlank())
+            ) {
+                notes += "⚠️ ${purchaseRows.size} purchase row(s) were NOT written — " +
+                    "no Purchase Register file and month tab are set. Nothing was lost; " +
+                    "set them and run again."
+            }
+            if (salesRows.isNotEmpty() &&
+                (current.salesWorkbook == null || current.salesTab.isBlank())
+            ) {
+                notes += "⚠️ ${salesRows.size} sales row(s) were NOT written — " +
+                    "no Sales Register file and month tab are set. Nothing was lost; " +
+                    "set them and run again."
+            }
+
             withContext(Dispatchers.IO) {
                 current.purchaseWorkbook?.takeIf { purchaseRows.isNotEmpty() && current.purchaseTab.isNotBlank() }
                     ?.let { uri ->

@@ -225,6 +225,29 @@ class XlsxAppenderTest {
     }
 
     @Test
+    fun `places new columns after a column this code does not recognise`() {
+        // Regression: the first new column was chosen by counting only the columns the
+        // header map recognises. A column the user keeps themselves sits to the right of
+        // TOTAL GRAND and is invisible to that map, so PAID DATE was emitted into the cell
+        // it already occupies — a duplicate cell reference, and payment data filed under
+        // someone else's heading.
+        val book = purchaseBook(extraHeaders = listOf("Notes"))
+        val (result, out) = appendTo(book, rows = listOf(invoiceRow()))
+
+        assertEquals("Notes", cellTextAt(out, "Jun", "N1"), "the user's column must be left alone")
+        assertEquals(listOf("PAID DATE", "PAYMENT METHOD", "CATEGORY"), result.addedColumns)
+        assertEquals("PAID DATE", cellTextAt(out, "Jun", "O1"))
+        assertEquals("PAYMENT METHOD", cellTextAt(out, "Jun", "P1"))
+        assertEquals("CATEGORY", cellTextAt(out, "Jun", "Q1"))
+        assertEquals("UPI", cellTextAt(out, "Jun", "P5"))
+
+        // No column may appear twice in the header row.
+        val headerRefs = SheetXml(sheetTextOf(out, "Jun")).rows().first { it.number == 1 }
+            .cells.map { it.ref }
+        assertEquals(headerRefs.size, headerRefs.distinct().size, "duplicate cell refs in header row")
+    }
+
+    @Test
     fun `sales register gets GST TYPE instead of CATEGORY`() {
         val book = TestWorkbooks.build(listOf("June" to TestWorkbooks.sampleRows(1)))
         val (result, out) = appendTo(

@@ -52,7 +52,7 @@ object BankParser {
             if (looksLikeHeader(line)) continue
 
             val description = describe(line)
-            val resolved = resolve(line, amounts, runningBalance)
+            val resolved = resolve(line, amounts, runningBalance, source)
 
             if (resolved == null) {
                 unparsed.add(rawLine.trim())
@@ -83,14 +83,14 @@ object BankParser {
      * Decides which figure on the line is the transaction and which way it went.
      *
      * Three strategies, most reliable first: an explicit Dr/Cr marker; the direction the
-     * running balance moved; then keywords in the narration. A credit-card statement
-     * inverts the sign convention — a purchase is a debit to the cardholder even though the
-     * statement shows it as an amount owed.
+     * running balance moved; then keywords in the narration. The middle one applies to bank
+     * accounts only — see the comment at its guard for why a credit card cannot use it.
      */
     private fun resolve(
         line: String,
         amounts: List<BigDecimal>,
         previousBalance: BigDecimal?,
+        source: StatementSource,
     ): Resolved? {
         val lower = line.lowercase()
 
@@ -103,7 +103,15 @@ object BankParser {
             return Resolved(candidate, isDebit, balance)
         }
 
-        if (previousBalance != null && balance != null) {
+        // Balance movement is only meaningful on a bank account, where the balance falls as
+        // money leaves. A credit-card statement's running figure is the amount owed, which
+        // RISES on a purchase, so the same test would read every unmarked purchase as a
+        // credit — routing real expenses out of the purchase register and into "unexplained
+        // money received". Inverting it here would assume a statement convention that has
+        // not been checked against a real card PDF, and a mis-signed transaction silently
+        // corrupts a register, so card lines fall through to the narration instead and go to
+        // review when that is inconclusive.
+        if (source == StatementSource.BANK && previousBalance != null && balance != null) {
             val delta = balance - previousBalance
             if (delta.abs().compareTo(BigDecimal.ZERO) != 0) {
                 // The balance movement is authoritative when it agrees with a figure on the line.

@@ -78,7 +78,13 @@ class XlsxAppender(private val pkg: XlsxPackage) {
         // formulas and references elsewhere in the workbook stay valid.
         val addedNames = ArrayList<String>()
         val newHeaderCells = StringBuilder()
-        var nextFreeCol = (columns.values.maxOrNull() ?: -1) + 1
+        // Start after the sheet's real width, not merely after the last column this code
+        // recognises. A column the user maintains themselves — "Notes", "Remarks" — sits to
+        // the right of TOTAL GRAND but is invisible to the header map, so counting only
+        // recognised columns would emit a second N1 into a row that already has one. That is
+        // a duplicate cell reference, and it puts payment data under somebody else's heading.
+        val occupiedMax = sheet.rows().flatMap { it.cells }.maxOfOrNull { it.column } ?: -1
+        var nextFreeCol = maxOf(columns.values.maxOrNull() ?: -1, occupiedMax) + 1
         val headerStyle = sheet.rows().firstOrNull { it.number == headerRow.number }
             ?.cells?.maxByOrNull { it.column }?.styleIndex
 
