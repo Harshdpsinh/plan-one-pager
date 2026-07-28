@@ -35,7 +35,9 @@ dependency tried. Text recognition works offline because the ML Kit model is bun
 APK rather than fetched.
 
 Statement passwords are held in the **Android Keystore** (AES-256-GCM), the equivalent of the
-desktop app's use of Windows Credential Manager. They are excluded from cloud backup and
+desktop app's use of Windows Credential Manager. Each bank account and card is added once as
+a named account with its own password, so several banks and several cards are all handled;
+passwords are remembered for the following month. They are excluded from cloud backup and
 device transfer, and wrapped in a type whose `toString()` prints `Secret(****)` so they cannot
 end up in a log by accident.
 
@@ -128,6 +130,19 @@ To build the app itself you need the Android SDK (Android Studio, or `ANDROID_HO
 ```
 
 ---
+
+## Accounts and passwords
+
+Add each bank account and credit card once — a name you recognise ("HDFC Savings", "Axis
+Flipkart Card") and its statement password. Then each month, tap **Add statement** on that
+account and pick the PDF. The right password is used automatically.
+
+If a statement is filed under the wrong account, it still opens: the app tries that account's
+password first, then the other saved ones. They are all your own passwords on your own
+device, and an encrypted PDF has no lockout, so the extra attempts cost nothing. Only if none
+of them work does the file go to review saying so.
+
+Deleting an account also deletes its password from the Keystore.
 
 ## Categorisation rules
 

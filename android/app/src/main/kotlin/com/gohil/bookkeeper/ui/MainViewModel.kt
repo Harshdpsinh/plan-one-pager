@@ -10,8 +10,11 @@ import com.gohil.bookkeeper.core.model.RegisterRow
 import com.gohil.bookkeeper.core.model.RegisterType
 import com.gohil.bookkeeper.core.model.ReviewItem
 import com.gohil.bookkeeper.core.xlsx.XlsxAppender
-import com.gohil.bookkeeper.data.PasswordVault
+import com.gohil.bookkeeper.data.Account
+import com.gohil.bookkeeper.data.AccountKind
+import com.gohil.bookkeeper.data.AccountStore
 import com.gohil.bookkeeper.data.Prefs
+import com.gohil.bookkeeper.data.Secret
 import com.gohil.bookkeeper.data.WorkbookStore
 import com.gohil.bookkeeper.pdf.DocumentExtractor
 import com.gohil.bookkeeper.work.ProcessJob
@@ -27,7 +30,7 @@ import kotlinx.coroutines.withContext
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = Prefs(app)
-    private val vault = PasswordVault(app)
+    private val accounts = AccountStore(app)
     private val store = WorkbookStore(app)
     private val extractor = DocumentExtractor(app)
 
@@ -40,6 +43,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val purchaseTab: String = "",
         val salesTab: String = "",
         val documents: List<ProcessJob.Document> = emptyList(),
+        val accounts: List<Account> = emptyList(),
+        /** Account ids that have a password saved, so the UI can show which still need one. */
+        val accountsWithPassword: Set<String> = emptySet(),
         val stage: Stage = Stage.Idle,
         val progress: ProcessJob.Progress? = null,
         val result: ProcessResult? = null,
@@ -69,6 +75,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 salesWorkbookName = prefs.salesWorkbook?.let(store::displayName).orEmpty(),
                 purchaseTab = prefs.purchaseTab,
                 salesTab = prefs.salesTab,
+            )
+        }
+        refreshAccounts()
+    }
+
+    private fun refreshAccounts() {
+        val all = accounts.all()
+        _state.update {
+            it.copy(
+                accounts = all,
+                accountsWithPassword = all.filter(accounts::hasPassword).map { a -> a.id }.toSet(),
             )
         }
     }
@@ -103,13 +120,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(salesTab = value) }
     }
 
-    fun addDocuments(uris: List<Uri>, kind: ProcessJob.Kind) {
+    fun addDocuments(uris: List<Uri>, kind: ProcessJob.Kind, account: Account? = null) {
         val app = getApplication<Application>()
         val added = uris.map { uri ->
             ProcessJob.Document(
                 uri = uri,
                 displayName = DocumentFile.fromSingleUri(app, uri)?.name ?: "document",
                 kind = kind,
+                accountId = account?.id,
+                accountLabel = account?.label,
             )
         }
         _state.update { it.copy(documents = it.documents + added) }
@@ -119,13 +138,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(documents = it.documents - doc) }
     }
 
-    fun savePassword(kind: ProcessJob.Kind, password: String) {
-        vault.put(kind.name, password)
+    // ── accounts ─────────────────────────────────────────────────────────────────
+
+    fun addAccount(label: String, kind: AccountKind, password: String) {
+        if (label.isBlank()) return
+        accounts.add(label, kind, password)
+        refreshAccounts()
     }
 
-    fun hasPassword(kind: ProcessJob.Kind): Boolean = vault.get(kind.name) != null
+    fun setAccountPassword(id: String, password: String) {
+        if (password.isBlank()) return
+        accounts.setPassword(id, password)
+        refreshAccounts()
+    }
 
-    fun forgetPasswords() = vault.forgetAll()
+    fun removeAccount(id: String) {
+        accounts.remove(id)
+        // Drop any documents filed under it, so a run cannot reference a deleted account.
+        _state.update { it.copy(documents = it.documents.filterNot { d -> d.accountId == id }) }
+        refreshAccounts()
+    }
 
     // ── run ──────────────────────────────────────────────────────────────────────
 
@@ -137,12 +169,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launchCatching {
             val job = ProcessJob(extractor, prefs.loadRules())
-            val passwords = ProcessJob.Kind.entries.mapNotNull { kind ->
-                vault.get(kind.name)?.let { kind to it }
-            }.toMap()
+            val known = accounts.all()
 
             val result = withContext(Dispatchers.Default) {
-                job.run(current.documents, passwords) { progress ->
+                job.run(
+                    documents = current.documents,
+                    passwordsFor = { doc ->
+                        val filedUnder = known.firstOrNull { it.id == doc.accountId }
+                        accounts.passwordCandidates(filedUnder).map(::Secret)
+                    },
+                ) { progress ->
                     _state.update { it.copy(progress = progress) }
                 }
             }

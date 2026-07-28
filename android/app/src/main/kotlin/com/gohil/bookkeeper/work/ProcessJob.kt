@@ -35,15 +35,27 @@ class ProcessJob(
         val uri: Uri,
         val displayName: String,
         val kind: Kind,
+        /**
+         * Which of the user's accounts this statement belongs to. Null for invoices, and for
+         * a statement the user did not file under a specific account.
+         */
+        val accountId: String? = null,
+        /** Shown in the UI and used to label rows in the review list. */
+        val accountLabel: String? = null,
     )
 
     enum class Kind { PURCHASE_INVOICE, SALES_INVOICE, BANK_STATEMENT, CREDIT_CARD_STATEMENT }
 
     data class Progress(val done: Int, val total: Int, val currentFile: String)
 
+    /**
+     * @param passwordsFor supplies the passwords to try for a document, best guess first.
+     *   A function rather than a map because the user may hold many accounts, each with its
+     *   own password, and the right order depends on which account the file was filed under.
+     */
     suspend fun run(
         documents: List<Document>,
-        passwords: Map<Kind, Secret>,
+        passwordsFor: (Document) -> List<Secret>,
         onProgress: (Progress) -> Unit = {},
     ): ProcessResult {
         val purchaseInvoices = ArrayList<Invoice>()
@@ -57,7 +69,11 @@ class ProcessJob(
 
             val extraction = try {
                 withTimeout(PER_FILE_TIMEOUT_MS) {
-                    extractor.extract(doc.uri, doc.displayName, passwords[doc.kind]?.reveal())
+                    extractor.extract(
+                        uri = doc.uri,
+                        displayName = doc.displayName,
+                        passwords = passwordsFor(doc).map { it.reveal() },
+                    )
                 }
             } catch (e: TimeoutCancellationException) {
                 failures += ReviewItem(
@@ -83,7 +99,17 @@ class ProcessJob(
                 is DocumentExtractor.Result.PasswordRequired -> failures += ReviewItem(
                     sourceFile = doc.displayName,
                     reason = ReviewReason.PASSWORD_REQUIRED,
-                    detail = "This file is password protected and the saved password did not open it.",
+                    detail = buildString {
+                        append("This file is password protected and none of your saved ")
+                        append("passwords opened it. ")
+                        append(
+                            if (doc.accountLabel != null) {
+                                "Check the password saved for ${doc.accountLabel}."
+                            } else {
+                                "Add the password for this account in the Accounts section."
+                            },
+                        )
+                    },
                     target = doc.kind.target(),
                 )
 

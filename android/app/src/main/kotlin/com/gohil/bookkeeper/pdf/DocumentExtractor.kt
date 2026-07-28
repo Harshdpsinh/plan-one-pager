@@ -29,26 +29,52 @@ class DocumentExtractor(
         data class Failed(val reason: String) : Result
     }
 
-    suspend fun extract(uri: Uri, displayName: String, password: String? = null): Result = try {
+    /**
+     * @param passwords candidates to try, in order. Several are accepted because the user
+     *   may hold statements for a number of banks and cards, each with its own password.
+     */
+    suspend fun extract(
+        uri: Uri,
+        displayName: String,
+        passwords: List<String> = emptyList(),
+    ): Result = try {
         when {
-            displayName.endsWith(".pdf", ignoreCase = true) -> extractPdf(uri, password)
+            displayName.endsWith(".pdf", ignoreCase = true) -> extractPdf(uri, passwords)
             else -> extractImage(uri)
         }
     } catch (e: Exception) {
         Result.Failed(e.message ?: e::class.java.simpleName)
     }
 
-    private suspend fun extractPdf(uri: Uri, password: String?): Result {
+    private suspend fun extractPdf(uri: Uri, passwords: List<String>): Result {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: return Result.Failed("Could not open the file.")
 
-        val document = try {
-            PDDocument.load(bytes, password ?: "")
-        } catch (e: Exception) {
-            // PDFBox reports a wrong or missing password as a load failure; distinguishing it
-            // lets the app prompt for a password instead of reporting the file as corrupt.
-            return if (isPasswordProblem(e)) Result.PasswordRequired else {
-                Result.Failed(e.message ?: "Could not read the PDF.")
+        // The empty password first: most invoices are not encrypted at all, and it is also
+        // what an encrypted file with an empty user password needs.
+        val attempts = listOf("") + passwords.filter { it.isNotBlank() }
+        var sawPasswordFailure = false
+        var document: PDDocument? = null
+
+        for (candidate in attempts) {
+            try {
+                document = PDDocument.load(bytes, candidate)
+                break
+            } catch (e: Exception) {
+                // PDFBox reports a wrong or missing password as a load failure. Telling that
+                // apart from genuine corruption is what lets the app say "wrong password"
+                // instead of "this file is broken".
+                if (isPasswordProblem(e)) {
+                    sawPasswordFailure = true
+                } else {
+                    return Result.Failed(e.message ?: "Could not read the PDF.")
+                }
+            }
+        }
+
+        if (document == null) {
+            return if (sawPasswordFailure) Result.PasswordRequired else {
+                Result.Failed("Could not read the PDF.")
             }
         }
 

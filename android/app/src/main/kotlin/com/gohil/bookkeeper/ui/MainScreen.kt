@@ -22,6 +22,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -42,10 +43,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gohil.bookkeeper.core.model.ReviewReason
+import com.gohil.bookkeeper.data.Account
+import com.gohil.bookkeeper.data.AccountKind
 import com.gohil.bookkeeper.data.WorkbookStore
 import com.gohil.bookkeeper.work.ProcessJob
 
@@ -100,13 +104,26 @@ private fun SetupScreen(vm: MainViewModel, state: MainViewModel.UiState) {
     ) { uri -> uri?.let(vm::setBackupFolder) }
 
     var docKind by remember { mutableStateOf(ProcessJob.Kind.PURCHASE_INVOICE) }
+    var docAccount by remember { mutableStateOf<Account?>(null) }
     val docPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris -> if (uris.isNotEmpty()) vm.addDocuments(uris, docKind) }
+    ) { uris -> if (uris.isNotEmpty()) vm.addDocuments(uris, docKind, docAccount) }
 
-    fun pick(kind: ProcessJob.Kind, mime: Array<String>) {
+    fun pick(kind: ProcessJob.Kind, mime: Array<String>, account: Account? = null) {
         docKind = kind
+        docAccount = account
         docPicker.launch(mime)
+    }
+
+    var showAddAccount by remember { mutableStateOf(false) }
+    if (showAddAccount) {
+        AddAccountDialog(
+            onDismiss = { showAddAccount = false },
+            onAdd = { label, kind, password ->
+                vm.addAccount(label, kind, password)
+                showAddAccount = false
+            },
+        )
     }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -147,7 +164,49 @@ private fun SetupScreen(vm: MainViewModel, state: MainViewModel.UiState) {
         }
 
         item {
-            SectionCard("2 · This month's documents") {
+            SectionCard("2 · Your accounts") {
+                Text(
+                    "Add each bank account and credit card once, with its statement " +
+                        "password. Passwords are remembered for next month.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (state.accounts.isEmpty()) {
+                    Text(
+                        "No accounts yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(onClick = { showAddAccount = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add a bank account or card")
+                }
+            }
+        }
+
+        items(state.accounts, key = { it.id }) { account ->
+            AccountCard(
+                account = account,
+                hasPassword = account.id in state.accountsWithPassword,
+                statementCount = state.documents.count { it.accountId == account.id },
+                onAddStatement = {
+                    pick(
+                        kind = if (account.kind == AccountKind.BANK) {
+                            ProcessJob.Kind.BANK_STATEMENT
+                        } else {
+                            ProcessJob.Kind.CREDIT_CARD_STATEMENT
+                        },
+                        mime = arrayOf("application/pdf"),
+                        account = account,
+                    )
+                },
+                onSetPassword = { vm.setAccountPassword(account.id, it) },
+                onRemove = { vm.removeAccount(account.id) },
+            )
+        }
+
+        item {
+            SectionCard("3 · Invoices") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     FilledTonalButton(
                         onClick = { pick(ProcessJob.Kind.PURCHASE_INVOICE, arrayOf("application/pdf", "image/*")) },
@@ -158,16 +217,11 @@ private fun SetupScreen(vm: MainViewModel, state: MainViewModel.UiState) {
                         modifier = Modifier.weight(1f),
                     ) { Text("Sale invoices") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    FilledTonalButton(
-                        onClick = { pick(ProcessJob.Kind.BANK_STATEMENT, arrayOf("application/pdf")) },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Bank statement") }
-                    FilledTonalButton(
-                        onClick = { pick(ProcessJob.Kind.CREDIT_CARD_STATEMENT, arrayOf("application/pdf")) },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Card bill") }
-                }
+                Text(
+                    "PDFs or photos. Add as many as you like.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
@@ -180,7 +234,7 @@ private fun SetupScreen(vm: MainViewModel, state: MainViewModel.UiState) {
                     Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                         Text(doc.displayName, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            doc.kind.label(),
+                            doc.accountLabel?.let { "${doc.kind.label()} · $it" } ?: doc.kind.label(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -189,20 +243,6 @@ private fun SetupScreen(vm: MainViewModel, state: MainViewModel.UiState) {
                         Icon(Icons.Default.Close, contentDescription = "Remove")
                     }
                 }
-            }
-        }
-
-        item {
-            SectionCard("3 · Passwords") {
-                PasswordField(vm, ProcessJob.Kind.BANK_STATEMENT, "Bank statement password")
-                PasswordField(vm, ProcessJob.Kind.CREDIT_CARD_STATEMENT, "Card bill password")
-                Text(
-                    "Stored in the Android Keystore, encrypted by the OS. This app has no " +
-                        "internet permission, so nothing can be sent anywhere.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                TextButton(onClick = vm::forgetPasswords) { Text("Forget saved passwords") }
             }
         }
 
@@ -232,20 +272,119 @@ private fun SetupScreen(vm: MainViewModel, state: MainViewModel.UiState) {
 }
 
 @Composable
-private fun PasswordField(vm: MainViewModel, kind: ProcessJob.Kind, label: String) {
-    var value by remember { mutableStateOf("") }
-    val alreadySaved = remember(kind) { vm.hasPassword(kind) }
-    OutlinedTextField(
-        value = value,
-        onValueChange = {
-            value = it
-            // Only persist a real value: an empty field means "leave whatever is saved
-            // alone", not "replace the saved password with nothing".
-            if (it.isNotBlank()) vm.savePassword(kind, it)
+private fun AccountCard(
+    account: Account,
+    hasPassword: Boolean,
+    statementCount: Int,
+    onAddStatement: () -> Unit,
+    onSetPassword: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var editingPassword by remember { mutableStateOf(false) }
+    var password by remember { mutableStateOf("") }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(account.label, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        buildString {
+                            append(account.kind.label)
+                            append(if (hasPassword) " · password saved" else " · no password yet")
+                            if (statementCount > 0) append(" · $statementCount statement(s) added")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (hasPassword) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
+                IconButton(onClick = onRemove) {
+                    Icon(Icons.Default.Close, contentDescription = "Remove account")
+                }
+            }
+
+            if (editingPassword || !hasPassword) {
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Statement password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    onClick = {
+                        onSetPassword(password)
+                        password = ""
+                        editingPassword = false
+                    },
+                    enabled = password.isNotBlank(),
+                ) { Text("Save password") }
+            } else {
+                TextButton(onClick = { editingPassword = true }) { Text("Change password") }
+            }
+
+            FilledTonalButton(onClick = onAddStatement, modifier = Modifier.fillMaxWidth()) {
+                Text("Add statement for ${account.label}")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddAccountDialog(
+    onDismiss: () -> Unit,
+    onAdd: (String, AccountKind, String) -> Unit,
+) {
+    var label by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(AccountKind.BANK) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add account") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Name (e.g. HDFC Savings, Axis Card)") },
+                    singleLine = true,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AccountKind.entries.forEach { option ->
+                        FilterChip(
+                            selected = kind == option,
+                            onClick = { kind = option },
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Statement password (optional)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Text(
+                    "Stored in the Android Keystore, encrypted by the OS. This app has no " +
+                        "internet permission, so nothing can leave the phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         },
-        label = { Text(if (alreadySaved && value.isEmpty()) "$label (saved)" else label) },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
+        confirmButton = {
+            TextButton(onClick = { onAdd(label, kind, password) }, enabled = label.isNotBlank()) {
+                Text("Add")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
