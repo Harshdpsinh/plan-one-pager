@@ -142,6 +142,33 @@ def verify_sales(fixtures: Path) -> None:
     check("direct gst type", ws["P5"].value, "Direct".upper())
 
 
+def verify_web_output(root: Path) -> None:
+    """The workbook the local web server hands back must be as sound as the phone app's."""
+    path = root / "web/build/web-fixtures/web_purchase_after.xlsx"
+    if not path.exists():
+        print(f"note: {path} not found — skipping web checks (run `gradle :web:test` first)")
+        return
+
+    wb = load(path)
+    if not wb:
+        return
+    check("web: tabs preserved", wb.sheetnames, ["May", "Jun"])
+
+    ws = wb["Jun"]
+    check("web: row appended", ws.max_row, 4)  # header + 2 existing + 1 new
+    check("web: vendor from the invoice letterhead", ws["E4"].value, "SHARMA OFFICE SUPPLIES PVT LTD")
+    check("web: invoice number", ws["D4"].value, "INV-2025-0412")
+    check("web: taxable value", ws["I4"].value, 4500.0)
+    check("web: CGST not swallowed by the rate", ws["J4"].value, 405.0)
+    check("web: SGST not swallowed by the rate", ws["K4"].value, 405.0)
+    check("web: date parsed day-first", ws["B4"].value, datetime(2025, 6, 12))
+    check("web: added columns", [c.value for c in ws[1]][13:], ["PAID DATE", "PAYMENT METHOD", "CATEGORY"])
+
+    cached = load(path, data_only=True)
+    if cached:
+        check("web: TOTAL GRAND", cached["Jun"]["M4"].value, 5310.0)
+
+
 def main() -> int:
     fixtures = Path(sys.argv[1] if len(sys.argv) > 1 else "core/build/fixtures")
     if not fixtures.is_dir():
@@ -150,6 +177,8 @@ def main() -> int:
     verify_purchase(fixtures)
     verify_new_tab(fixtures)
     verify_sales(fixtures)
+    # fixtures is <root>/core/build/fixtures; the web output lives under the same root.
+    verify_web_output(fixtures.parent.parent.parent)
 
     if failures:
         print(f"FAILED — {len(failures)} of {checks} checks did not pass:\n")

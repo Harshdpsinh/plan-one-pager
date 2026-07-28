@@ -33,8 +33,9 @@ dependencyResolutionManagement {
 
 rootProject.name = "GohilBookkeeper"
 
-// :core is pure Kotlin/JVM — it builds and tests with nothing but a JDK.
+// Both of these are pure Kotlin/JVM — they build and test with nothing but a JDK.
 include(":core")
+include(":web")
 
 // :app needs the Android SDK. Including it unconditionally would break `gradle :core:test`
 // on any machine without the SDK installed (including CI sandboxes and this project's
@@ -52,7 +53,7 @@ if (androidSdkAvailable) {
     include(":app")
 } else {
     logger.lifecycle(
-        "No Android SDK detected — configuring :core only. " +
+        "No Android SDK detected — configuring :core and :web only. " +
             "Set ANDROID_HOME or create android/local.properties to build the app."
     )
 }

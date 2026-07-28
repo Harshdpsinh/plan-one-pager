@@ -3,6 +3,9 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     kotlin("jvm")
     kotlin("plugin.serialization")
+    // Publishes the synthetic-workbook builder so :web's tests can use the same fixtures
+    // rather than growing a second, subtly different one.
+    `java-test-fixtures`
 }
 
 // Deliberately NOT using jvmToolchain(17): that makes the build fail outright on a machine

@@ -41,6 +41,11 @@ jobs:
       - name: Run core tests
         run: ./gradlew :core:test
 
+      # The local web server shares the core module, and unlike the Android app it can be
+      # driven end to end here: real multipart upload, real PDF, real .xlsx back out.
+      - name: Run web server tests
+        run: ./gradlew :web:test
+
       # Reading the generated workbooks back with the same code that wrote them cannot catch
       # a structural mistake both halves agree on. openpyxl is an independent OOXML parser.
       - name: Set up Python
@@ -53,12 +58,25 @@ jobs:
           pip install --quiet openpyxl
           python3 tools/verify_fixtures.py core/build/fixtures
 
-      - name: Upload test report on failure
+      # distZip, not installDist: this produces the single archive the user downloads.
+      - name: Package the local server
+        run: ./gradlew :web:distZip
+
+      - name: Upload local server
+        uses: actions/upload-artifact@v4
+        with:
+          name: gohil-bookkeeper-server
+          path: android/web/build/distributions/*.zip
+          if-no-files-found: error
+
+      - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: core-test-report
-          path: android/core/build/reports/tests/test
+          name: test-reports
+          path: |
+            android/core/build/reports/tests/test
+            android/web/build/reports/tests/test
 
   apk:
     name: Build APK
@@ -110,6 +128,11 @@ jobs:
       - name: Build release APK
         run: ./gradlew :app:assembleRelease
 
+      # Built here too so both downloads can be attached to the same release. Artifacts do
+      # not cross jobs on their own.
+      - name: Package the local server
+        run: ./gradlew :web:distZip
+
       - name: Report signing mode
         run: |
           if [ -f keystore.properties ]; then
@@ -130,8 +153,6 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # Attaching to a release gives a URL that can be opened directly on the phone,
-      # which is the whole point of a sideloaded build.
       # An Actions artifact is a login-gated zip, so it cannot be installed from a phone.
       # A release asset is a plain public URL that can. The action creates the tag and the
       # release itself, which matters because the environment this was developed in cannot
@@ -146,7 +167,9 @@ jobs:
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'sideload-latest' }}
           name: Gohil Bookkeeper — sideload build
-          files: android/app/build/outputs/apk/release/*.apk
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+            android/web/build/distributions/*.zip
           generate_release_notes: false
           body: |
             Sideload build of Gohil Bookkeeper.
@@ -157,3 +180,8 @@ jobs:
 
             Runs fully offline. The app has no internet permission, so bank statements and
             their passwords cannot leave the device.
+
+            **Also here:** `gohil-bookkeeper-*.zip` is the desktop version — the same
+            processing as a local web page you open in a browser. Unzip it, run
+            `bin/gohil-bookkeeper` (or the `.bat` on Windows), and open the link it prints.
+            Needs Java 17 or newer.

@@ -1,9 +1,17 @@
-# Gohil Bookkeeper — Android
+# Gohil Bookkeeper
 
-Turns a month of financial documents into rows in the two Excel registers, entirely on the
-phone. No LLM, no server, no network.
+Turns a month of financial documents into rows in the two Excel registers. No LLM, no cloud,
+no network.
 
-Sideloaded APK — not on the Play Store.
+Two ways to run it, sharing one tested engine:
+
+| | What it is | Best for |
+| --- | --- | --- |
+| **Phone app** | Sideloaded APK, fully offline, OCR built in | Photographing bills as they arrive |
+| **Local server** | A web page served from your own computer | A month's worth at once, on a real keyboard |
+
+Both use the same `core` module — the Excel writing, parsing, matching and categorisation
+rules are shared verbatim, so there is no second implementation to drift out of step.
 
 ---
 
@@ -97,12 +105,52 @@ switching later means uninstalling first — which clears the saved passwords.
 
 ---
 
+## The local server (computer, and any device on your network)
+
+Download `gohil-bookkeeper-*.zip` from the Releases page, unzip, and run:
+
+```bash
+bin/gohil-bookkeeper              # macOS / Linux
+bin\gohil-bookkeeper.bat          # Windows
+```
+
+It prints a link — open it in any browser. Needs **Java 17 or newer** and nothing else.
+
+```
+--port 8080     listen on a different port
+--network       also serve other devices on your network
+--help
+```
+
+By default it listens on **localhost only**, so nothing outside that computer can reach it.
+`--network` lets you use it from your phone or another laptop, and because that puts an
+upload form for bank statements on a shared network, it prints a URL containing a
+single-use access token. Share that link only with your own devices; restarting invalidates
+it.
+
+**Your files are never modified.** You upload copies, and download updated workbooks at the
+end — the originals on disk cannot be touched by construction. Passwords are held in memory
+for the run only: never written to disk, never logged, and the server makes no outbound
+connections at all.
+
+Statement passwords go in one box, one per line. Every protected PDF is tried against all of
+them, so several banks and several cards need no per-file fiddling.
+
+**OCR is optional here.** Text-based PDFs — nearly all bank statements and vendor invoices —
+work with no extra setup. Scans and photos need [Tesseract](https://github.com/tesseract-ocr/tesseract)
+installed and on your PATH; without it those files go to the review list saying so, and the
+rest of the run is unaffected. The phone app has recognition built in, so photographed bills
+are easiest there.
+
+---
+
 ## Project layout
 
 ```
 android/
   core/    pure Kotlin/JVM — xlsx writing, parsing, matching, categorisation, routing
   app/     Android — Compose UI, file pickers, PDF/OCR, keystore vault
+  web/     local server — Javalin + browser UI, reuses core
   tools/   verify_fixtures.py, independent workbook validation
 ```
 
@@ -114,8 +162,9 @@ and tests anywhere:
 
 ```bash
 cd android
-./gradlew :core:test                              # no Android SDK needed
+./gradlew :core:test :web:test                    # no Android SDK needed
 python3 tools/verify_fixtures.py core/build/fixtures
+./gradlew :web:run                                # start the server locally
 ```
 
 The second command matters. The Kotlin tests read their output back with the same code that
@@ -168,6 +217,9 @@ a GST return.
   banks use in practice.
 - **Processing runs while the app is open.** Long OCR batches should not be backgrounded
   mid-run; there is no foreground service yet.
+- **The web server is the verified path.** Its tests drive the real HTTP server with a real
+  password-protected PDF and check the workbook that comes back out, so that route is
+  exercised end to end. The phone app is not — see below.
 - **The `app` module compiles but has never been run.** It was written in an environment
   with no Android SDK; CI compiles it and produces an APK, so it is known to build, but no
   screen has ever been displayed and no real PDF has ever been through it. `core` is the part
