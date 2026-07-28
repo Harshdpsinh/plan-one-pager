@@ -153,7 +153,8 @@ a GST return.
   banks use in practice.
 - **Processing runs while the app is open.** Long OCR batches should not be backgrounded
   mid-run; there is no foreground service yet.
-- **The `app` module has never been compiled by its author.** It was written in an
-  environment with no Android SDK, so `core` is the part backed by executed tests; the
-  Compose UI, PDF and OCR code are first compiled by CI and first exercised when you install
-  the APK. Expect the first CI run to be where any build errors in `app` surface.
+- **The `app` module compiles but has never been run.** It was written in an environment
+  with no Android SDK; CI compiles it and produces an APK, so it is known to build, but no
+  screen has ever been displayed and no real PDF has ever been through it. `core` is the part
+  backed by executed tests. Treat the first install as the first real test of the UI, the
+  file pickers, the PDF unlocking and the OCR path.
