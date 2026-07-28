@@ -181,7 +181,20 @@ jobs:
             Runs fully offline. The app has no internet permission, so bank statements and
             their passwords cannot leave the device.
 
-            **Also here:** `gohil-bookkeeper-*.zip` is the desktop version — the same
-            processing as a local web page you open in a browser. Unzip it, run
-            `bin/gohil-bookkeeper` (or the `.bat` on Windows), and open the link it prints.
-            Needs Java 17 or newer.
+            ---
+
+            **`gohil-bookkeeper.zip` is the desktop version** — the same processing, as a
+            local web page in your browser. Nothing is uploaded; the updated workbook is a
+            download, so your original file is never modified.
+
+            1. Install **Java 17 or newer** if you do not have it:
+               https://adoptium.net/temurin/releases/?version=17 (Windows: pick the `.msi`)
+            2. Unzip `gohil-bookkeeper.zip`
+            3. **Windows:** double-click **`START-HERE.bat`**
+               **macOS / Linux:** run `./start-here.sh`
+
+            Your browser opens automatically. Leave the console window open while you use it.
+
+            If the window flashes and closes, Java is missing — `START-HERE.bat` detects that
+            and tells you what to install rather than vanishing. Run it from the zip's top
+            folder, not the one inside `bin`.
