@@ -36,6 +36,19 @@ application {
     applicationName = "gohil-bookkeeper"
 }
 
+// The double-click launchers sit at the root of the zip, beside bin/ and lib/. The generated
+// start scripts stay where they are for anyone running from a terminal.
+distributions {
+    main {
+        contents {
+            from("launcher") {
+                into("")
+                filePermissions { unix("0755") }
+            }
+        }
+    }
+}
+
 tasks.test {
     useJUnitPlatform()
     testLogging { events("passed", "failed", "skipped") }
