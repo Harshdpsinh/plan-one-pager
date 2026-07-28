@@ -10,6 +10,17 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+
+    // Plugin versions are declared once here rather than in each module. Repeating a version
+    // in more than one subproject's `plugins { }` block makes Gradle load the Kotlin plugin
+    // twice in separate classloaders, which it warns "may break the build".
+    plugins {
+        kotlin("jvm") version "2.0.21"
+        kotlin("plugin.serialization") version "2.0.21"
+        id("org.jetbrains.kotlin.android") version "2.0.21"
+        id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+        id("com.android.application") version "8.7.3"
+    }
 }
 
 dependencyResolutionManagement {

@@ -4,6 +4,7 @@ import android.content.Context
 import com.gohil.bookkeeper.core.model.StatementSource
 import java.util.UUID
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 enum class AccountKind {
@@ -46,7 +47,7 @@ class AccountStore(context: Context) {
     fun all(): List<Account> {
         val raw = prefs.getString(KEY, null) ?: return emptyList()
         // A corrupt list must not brick the app; the user can re-add accounts.
-        return runCatching { JSON.decodeFromString<List<Account>>(raw) }.getOrDefault(emptyList())
+        return runCatching { JSON.decodeFromString(LIST, raw) }.getOrDefault(emptyList())
     }
 
     fun ofKind(kind: AccountKind): List<Account> = all().filter { it.kind == kind }
@@ -92,11 +93,15 @@ class AccountStore(context: Context) {
     }
 
     private fun save(accounts: List<Account>) {
-        prefs.edit().putString(KEY, JSON.encodeToString(accounts)).apply()
+        prefs.edit().putString(KEY, JSON.encodeToString(LIST, accounts)).apply()
     }
 
     companion object {
         private const val KEY = "accounts_json"
         private val JSON = Json { ignoreUnknownKeys = true }
+
+        // An explicit serializer rather than the reified helper: it needs no extra import
+        // to resolve, and it survives R8 without relying on generic type information.
+        private val LIST = ListSerializer(Account.serializer())
     }
 }

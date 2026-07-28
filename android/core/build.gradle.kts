@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm") version "2.0.21"
-    kotlin("plugin.serialization") version "2.0.21"
+    kotlin("jvm")
+    kotlin("plugin.serialization")
 }
 
 // Deliberately NOT using jvmToolchain(17): that makes the build fail outright on a machine

@@ -88,7 +88,7 @@ class DocumentExtractor(
             }
 
             // No embedded text: a scan. Render the pages and read them.
-            return Result.Text(ocrPdfPages(doc, bytes, password), usedOcr = true)
+            return Result.Text(ocrPdfPages(doc, bytes), usedOcr = true)
         }
     }
 
@@ -100,7 +100,7 @@ class DocumentExtractor(
      * an already-unlocked copy is written to app-private cache first and deleted immediately
      * afterwards — it holds decrypted financial data and must not outlive the extraction.
      */
-    private suspend fun ocrPdfPages(doc: PDDocument, original: ByteArray, password: String?): String {
+    private suspend fun ocrPdfPages(doc: PDDocument, original: ByteArray): String {
         val needsDecryptedCopy = doc.isEncrypted
         val temp = File.createTempFile("render", ".pdf", context.cacheDir)
         try {
