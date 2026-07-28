@@ -1,0 +1,134 @@
+name: Android
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The core module is pure JVM, so it needs no Android SDK and gives fast feedback on the
+  # logic that actually decides what goes into the accountant's workbooks.
+  core:
+    name: Core logic tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run core tests
+        run: ./gradlew :core:test
+
+      # Reading the generated workbooks back with the same code that wrote them cannot catch
+      # a structural mistake both halves agree on. openpyxl is an independent OOXML parser.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate generated workbooks with openpyxl
+        run: |
+          pip install --quiet openpyxl
+          python3 tools/verify_fixtures.py core/build/fixtures
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-report
+          path: android/core/build/reports/tests/test
+
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    needs: core
+    defaults:
+      run:
+        working-directory: android
+    env:
+      # The `secrets` context is not available inside `if:`, so the presence check is
+      # resolved once here and the steps below branch on this instead.
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Signing with a stable key matters for sideloading: Android refuses to upgrade an
+      # installed app whose signature changed, and reinstalling wipes the saved statement
+      # passwords. Without the secrets the build falls back to debug signing so the workflow
+      # still yields something installable.
+      - name: Restore signing keystore
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=$(pwd)/release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease
+
+      - name: Report signing mode
+        run: |
+          if [ -f keystore.properties ]; then
+            echo "::notice::APK signed with the release keystore."
+          else
+            echo "::warning::No ANDROID_KEYSTORE_B64 secret set — APK is debug-signed. Fine for testing, but adding a release key later requires uninstalling the app first, which clears saved passwords."
+          fi
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f release.keystore keystore.properties
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gohil-bookkeeper-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      # Attaching to a release gives a URL that can be opened directly on the phone,
+      # which is the whole point of a sideloaded build.
+      - name: Attach APK to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/*.apk

@@ -6,3 +6,5 @@ local.properties
 *.jks
 .idea/
 captures/
+keystore.properties
+release.keystore
