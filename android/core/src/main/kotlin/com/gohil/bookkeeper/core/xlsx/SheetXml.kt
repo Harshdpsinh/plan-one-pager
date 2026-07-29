@@ -122,24 +122,29 @@ internal class SheetXml(xmlText: String) {
         xml = xml.substring(0, row.element.start) + head + xml.substring(headEnd)
     }
 
-    /** Rewrites `<dimension>` to span the sheet's real extent. Added if absent. */
+    /**
+     * Rewrites `<dimension>` to span the sheet's real extent, if the sheet has one.
+     *
+     * A sheet without a dimension is left without one. The element is optional and Excel
+     * recomputes the extent on open, whereas adding it means placing it correctly: the
+     * worksheet schema fixes the order of everything before `<sheetData>`, and an element
+     * out of sequence makes Excel reject the whole part with nothing more descriptive than
+     * "XML error". Inserting it just before `<sheetData>` — after `<sheetViews>` and
+     * `<cols>` — is exactly that mistake, and it corrupted a real register.
+     *
+     * Not writing an optional element is the cheaper correctness guarantee than writing it
+     * in the right place, and it fits this class's rule of touching as little as possible.
+     */
     fun updateDimension() {
+        val existing = XmlScan.find(xml, "dimension") ?: return
         val rows = rows()
         if (rows.isEmpty()) return
         val maxRow = rows.maxOf { it.number }
         val maxCol = rows.flatMap { it.cells }.maxOfOrNull { it.column } ?: 0
         val ref = "A1:${CellRef.of(maxCol, maxRow)}"
-        val existing = XmlScan.find(xml, "dimension")
-        if (existing != null) {
-            xml = xml.substring(0, existing.start) +
-                """<dimension ref="$ref"/>""" +
-                xml.substring(existing.end)
-        } else {
-            val sd = XmlScan.find(xml, "sheetData") ?: return
-            xml = xml.substring(0, sd.start) +
-                """<dimension ref="$ref"/>""" +
-                xml.substring(sd.start)
-        }
+        xml = xml.substring(0, existing.start) +
+            """<dimension ref="$ref"/>""" +
+            xml.substring(existing.end)
     }
 
     /**

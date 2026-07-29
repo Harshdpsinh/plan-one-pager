@@ -21,7 +21,14 @@ class JvmExtractor(private val ocr: TesseractOcr = TesseractOcr()) {
 
     sealed interface Result {
         data class Text(val text: String, val usedOcr: Boolean) : Result
-        data object PasswordRequired : Result
+
+        /**
+         * Encrypted, and nothing supplied opened it. Carries the underlying reason so the
+         * user can tell "wrong password" from "this file's encryption is not supported",
+         * which look identical from the outside but need completely different responses.
+         */
+        data class PasswordProblem(val triedCount: Int, val detail: String) : Result
+
         data class Failed(val reason: String) : Result
     }
 
@@ -40,6 +47,7 @@ class JvmExtractor(private val ocr: TesseractOcr = TesseractOcr()) {
         // encrypted file with a blank user password needs.
         val attempts = listOf("") + passwords.filter { it.isNotBlank() }
         var sawPasswordFailure = false
+        var lastFailure: Exception? = null
         var document: PDDocument? = null
 
         for (candidate in attempts) {
@@ -47,14 +55,27 @@ class JvmExtractor(private val ocr: TesseractOcr = TesseractOcr()) {
                 document = Loader.loadPDF(bytes, candidate)
                 break
             } catch (e: Exception) {
+                lastFailure = e
                 if (isPasswordProblem(e)) sawPasswordFailure = true
                 else return Result.Failed(e.message ?: "Could not read the PDF.")
             }
         }
 
         if (document == null) {
-            return if (sawPasswordFailure) Result.PasswordRequired
-            else Result.Failed("Could not read the PDF.")
+            // Report what actually went wrong. "None of your passwords worked" is the same
+            // message whether the password was mistyped, the file uses an encryption this
+            // cannot handle, or the PDF is damaged — and only the first of those is worth
+            // the user retyping anything for.
+            val detail = lastFailure?.let { "${it::class.java.simpleName}: ${it.message}" }
+                ?: "no further detail"
+            return if (sawPasswordFailure) {
+                Result.PasswordProblem(
+                    triedCount = attempts.size - 1,
+                    detail = detail,
+                )
+            } else {
+                Result.Failed("Could not read the PDF ($detail).")
+            }
         }
 
         document.use { doc ->

@@ -125,10 +125,20 @@ class BookkeeperServer(private val token: String? = null) {
             for (file in files) {
                 val bytes = file.content().readBytes()
                 when (val extracted = extractor.extract(bytes, file.filename(), passwords)) {
-                    is JvmExtractor.Result.PasswordRequired -> failures += ReviewItem(
+                    is JvmExtractor.Result.PasswordProblem -> failures += ReviewItem(
                         sourceFile = file.filename(),
                         reason = ReviewReason.PASSWORD_REQUIRED,
-                        detail = "Password protected, and none of the passwords you entered opened it.",
+                        detail = buildString {
+                            if (extracted.triedCount == 0) {
+                                append("This PDF is password protected but you did not enter any passwords.")
+                            } else {
+                                append("Password protected. Tried ${extracted.triedCount} ")
+                                append("password(s) and none opened it. ")
+                                append("Check for typos, and note that bank passwords are usually ")
+                                append("case sensitive and often combine name and date of birth.")
+                            }
+                            append("\n\nTechnical detail: ${extracted.detail}")
+                        },
                         target = if (kind == "salesInvoices") RegisterType.SALES else RegisterType.PURCHASE,
                     )
 

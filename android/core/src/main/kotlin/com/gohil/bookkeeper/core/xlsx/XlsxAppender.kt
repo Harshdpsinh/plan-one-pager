@@ -183,7 +183,18 @@ class XlsxAppender(private val pkg: XlsxPackage) {
         )
     }
 
-    fun toByteArray(): ByteArray = pkg.toByteArray()
+    /**
+     * Serialises the workbook, refusing if the result is one Excel would reject.
+     *
+     * The check runs here rather than at the call sites so no path can skip it. It throws
+     * instead of returning damaged bytes: the user's original file is untouched at this
+     * point, so failing is fully recoverable, whereas saving a register that Excel has to
+     * repair loses the appended rows and shakes confidence in every other number in it.
+     */
+    fun toByteArray(): ByteArray {
+        XlsxValidator.validate(pkg)
+        return pkg.toByteArray()
+    }
 
     // ── internals ────────────────────────────────────────────────────────────────
 
