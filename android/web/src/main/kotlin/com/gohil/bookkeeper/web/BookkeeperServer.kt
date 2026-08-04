@@ -27,10 +27,20 @@ import java.util.concurrent.ConcurrentHashMap
  * construction untouched. That is a stronger guarantee than the phone app can make, and it
  * is why this deliberately does not try to write files in place.
  */
-class BookkeeperServer(private val token: String? = null) {
+class BookkeeperServer(
+    private val token: String? = null,
+    /**
+     * Null turns off remembering passwords entirely — nothing is written to disk and every
+     * protected file is asked about every run. Tests pass a temporary store so they never
+     * touch the real one in the user's home directory.
+     */
+    private val passwordStore: PasswordStore? = PasswordStore(),
+    loanRepository: LoanRepository = LoanRepository(),
+) {
 
     private val sessions = ConcurrentHashMap<String, Session>()
     private val extractor = JvmExtractor()
+    private val spend = SpendRoutes(passwordStore, loanRepository, extractor)
     private var app: Javalin? = null
 
     class Session {
@@ -40,6 +50,9 @@ class BookkeeperServer(private val token: String? = null) {
         var salesTab: String = ""
         var result: ProcessResult? = null
         val outputs = ConcurrentHashMap<String, ByteArray>()
+
+        /** The Spend Analysis side of the same browser session. */
+        val spend = SpendRoutes.Session()
     }
 
     data class Upload(val name: String, val bytes: ByteArray)
@@ -51,10 +64,12 @@ class BookkeeperServer(private val token: String? = null) {
             config.jetty.multipartConfig.maxFileSize(50, io.javalin.config.SizeUnit.MB)
         }.apply {
             before { ctx -> requireToken(ctx) }
-            get("/") { ctx -> ctx.contentType("text/html; charset=utf-8").result(indexHtml()) }
+            get("/") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("index.html")) }
+            get("/spend") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("spend.html")) }
             post("/api/process") { ctx -> handleProcess(ctx) }
             post("/api/write") { ctx -> handleWrite(ctx) }
             get("/api/download/{key}") { ctx -> handleDownload(ctx) }
+            spend.register(this) { ctx -> sessionOf(ctx).spend }
             exception(Exception::class.java) { e, ctx ->
                 ctx.status(400).json(mapOf("error" to (e.message ?: "Something went wrong.")))
             }
@@ -124,7 +139,19 @@ class BookkeeperServer(private val token: String? = null) {
         fun handle(files: List<UploadedFile>, kind: String) {
             for (file in files) {
                 val bytes = file.content().readBytes()
-                when (val extracted = extractor.extract(bytes, file.filename(), passwords)) {
+
+                // Ask the store about this specific file first. When it knows the password the
+                // typed list is irrelevant, and when it does not, the typed list still works —
+                // so an existing habit of pasting every password keeps functioning while the
+                // Spend screen's per-file prompt gradually makes it unnecessary.
+                val probe = PdfProbe.probe(bytes, file.filename(), passwordStore)
+                val candidates = probe.password?.let { listOf(it) } ?: passwords
+                // A password typed here that opens the file is worth remembering too.
+                if (probe.needsPassword) {
+                    passwords.firstOrNull { PdfProbe.verify(bytes, it, passwordStore, remember = true) }
+                }
+
+                when (val extracted = extractor.extract(bytes, file.filename(), candidates)) {
                     is JvmExtractor.Result.PasswordProblem -> failures += ReviewItem(
                         sourceFile = file.filename(),
                         reason = ReviewReason.PASSWORD_REQUIRED,
@@ -302,9 +329,9 @@ class BookkeeperServer(private val token: String? = null) {
         ReviewReason.DUPLICATE_SUSPECTED -> "Possible duplicate"
     }
 
-    private fun indexHtml(): String =
-        javaClass.getResourceAsStream("/web/index.html")?.bufferedReader()?.readText()
-            ?: "<h1>UI resource missing</h1>"
+    private fun page(name: String): String =
+        javaClass.getResourceAsStream("/web/$name")?.bufferedReader()?.readText()
+            ?: "<h1>UI resource missing: $name</h1>"
 
     companion object {
         private const val SESSION_COOKIE = "bk_session"

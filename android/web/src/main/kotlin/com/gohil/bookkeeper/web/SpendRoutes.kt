@@ -1,0 +1,419 @@
+package com.gohil.bookkeeper.web
+
+import com.gohil.bookkeeper.core.model.StatementSource
+import com.gohil.bookkeeper.core.parse.BankParser
+import com.gohil.bookkeeper.core.parse.InvoiceParser
+import com.gohil.bookkeeper.core.spend.Loan
+import com.gohil.bookkeeper.core.spend.LoanBook
+import com.gohil.bookkeeper.core.spend.LoanDirection
+import com.gohil.bookkeeper.core.spend.Repayment
+import com.gohil.bookkeeper.core.spend.SpendCategorizer
+import com.gohil.bookkeeper.core.spend.SpendItem
+import com.gohil.bookkeeper.core.spend.SpendSummary
+import io.javalin.Javalin
+import io.javalin.http.Context
+import java.math.BigDecimal
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * The Spend Analysis half of the app: smart uploads, per-file passwords, categorised charts
+ * and the loan book.
+ *
+ * It shares the bookkeeper's parsers rather than growing its own. The same statement should
+ * not read one way on the GST screen and another way on the dashboard — if it did, the two
+ * numbers would disagree and neither could be trusted.
+ */
+class SpendRoutes(
+    private val store: PasswordStore?,
+    private val loans: LoanRepository,
+    private val extractor: JvmExtractor = JvmExtractor(),
+    private val categorizer: SpendCategorizer = SpendCategorizer(),
+) {
+
+    /**
+     * Uploaded files live here until the tab is closed. Bytes stay in memory: a statement is
+     * the most sensitive thing in this app, and the server has no reason to leave one on disk.
+     */
+    class Session {
+        val files = ConcurrentHashMap<String, Staged>()
+        @Volatile var summary: SpendSummary? = null
+    }
+
+    class Staged(
+        val fileName: String,
+        val bytes: ByteArray,
+        @Volatile var state: PdfProbe.State,
+        @Volatile var password: String? = null,
+        @Volatile var note: String = "",
+    )
+
+    fun register(app: Javalin, sessionOf: (Context) -> Session) {
+        app.post("/api/spend/upload") { ctx -> upload(ctx, sessionOf(ctx)) }
+        app.post("/api/spend/unlock") { ctx -> unlock(ctx, sessionOf(ctx)) }
+        app.post("/api/spend/analyse") { ctx -> analyse(ctx, sessionOf(ctx)) }
+        app.post("/api/spend/remove") { ctx -> remove(ctx, sessionOf(ctx)) }
+        app.get("/api/spend/loans") { ctx -> ctx.json(loanPayload()) }
+        app.post("/api/spend/loans") { ctx -> saveLoan(ctx) }
+        app.post("/api/spend/loans/repayment") { ctx -> addRepayment(ctx) }
+        app.post("/api/spend/loans/delete") { ctx -> deleteLoan(ctx) }
+        app.get("/api/spend/cashflow") { ctx -> ctx.json(cashFlow(sessionOf(ctx))) }
+        app.get("/api/spend/passwords") { ctx ->
+            ctx.json(
+                mapOf(
+                    "remembered" to (store?.size() ?: 0),
+                    "location" to PasswordStore.describeLocation(),
+                    "enabled" to (store != null),
+                ),
+            )
+        }
+        app.post("/api/spend/passwords/forget") { ctx ->
+            store?.forgetAll()
+            ctx.json(mapOf("remembered" to 0))
+        }
+    }
+
+    // ── uploads and passwords ────────────────────────────────────────────────────
+
+    /**
+     * Take the files and report, per file, whether that specific one needs a password.
+     *
+     * Nothing is parsed here. Probing first is what lets the UI ask about exactly one file
+     * instead of demanding a pile of passwords up front for documents that may not even be
+     * encrypted.
+     */
+    private fun upload(ctx: Context, session: Session) {
+        val incoming = ctx.uploadedFiles("files")
+        if (incoming.isEmpty()) throw IllegalArgumentException("No files were uploaded.")
+
+        for (file in incoming) {
+            val bytes = file.content().readBytes()
+            val probe = PdfProbe.probe(bytes, file.filename(), store)
+            val existing = session.files[probe.fileHash]
+            if (existing != null) {
+                // Same document twice in one session. Keep the unlocked copy rather than
+                // resetting it to "needs password" and asking again.
+                continue
+            }
+            session.files[probe.fileHash] = Staged(
+                fileName = probe.fileName,
+                bytes = bytes,
+                state = probe.state,
+                password = probe.password,
+                note = probe.detail,
+            )
+        }
+        session.summary = null
+        ctx.json(fileList(session))
+    }
+
+    /** A password typed for one named file, checked against that file only. */
+    private fun unlock(ctx: Context, session: Session) {
+        val hash = ctx.formParam("fileHash").orEmpty()
+        val password = ctx.formParam("password").orEmpty()
+        // Remembering is the default because the user asked never to be asked twice, but it
+        // stays a per-file choice — see PasswordStore for what writing it down actually costs.
+        val remember = ctx.formParam("remember") != "false"
+        val staged = session.files[hash] ?: throw IllegalArgumentException("That file is no longer loaded.")
+
+        if (PdfProbe.verify(staged.bytes, password, store, remember)) {
+            staged.state = PdfProbe.State.UNLOCKED_FROM_STORE
+            staged.password = password
+            staged.note = if (remember) "Remembered — you will not be asked for this file again." else ""
+            session.summary = null
+            ctx.json(mapOf("ok" to true, "files" to fileList(session)))
+        } else {
+            ctx.json(
+                mapOf(
+                    "ok" to false,
+                    "error" to "That password did not open ${staged.fileName}. " +
+                        "Bank passwords are case sensitive and often combine name and date of birth.",
+                    "files" to fileList(session),
+                ),
+            )
+        }
+    }
+
+    private fun remove(ctx: Context, session: Session) {
+        session.files.remove(ctx.formParam("fileHash").orEmpty())
+        session.summary = null
+        ctx.json(fileList(session))
+    }
+
+    private fun fileList(session: Session) = mapOf(
+        "files" to session.files.entries
+            .sortedBy { it.value.fileName }
+            .map { (hash, staged) ->
+                mapOf(
+                    "fileHash" to hash,
+                    "fileName" to staged.fileName,
+                    "state" to staged.state.name,
+                    "needsPassword" to (staged.state == PdfProbe.State.NEEDS_PASSWORD),
+                    "note" to staged.note,
+                )
+            },
+        // Never the passwords themselves, only the count. The browser has no reason to hold
+        // them, so it is not given the chance to leak them into a screenshot or a bug report.
+        "needsPassword" to session.files.values.count { it.state == PdfProbe.State.NEEDS_PASSWORD },
+    )
+
+    // ── analysis ─────────────────────────────────────────────────────────────────
+
+    private fun analyse(ctx: Context, session: Session) {
+        val items = mutableListOf<SpendItem>()
+        val skipped = mutableListOf<Map<String, String>>()
+
+        for ((_, staged) in session.files) {
+            if (staged.state == PdfProbe.State.NEEDS_PASSWORD) {
+                skipped += mapOf("file" to staged.fileName, "why" to "Still locked — enter its password.")
+                continue
+            }
+            if (staged.state == PdfProbe.State.UNREADABLE) {
+                skipped += mapOf("file" to staged.fileName, "why" to "Could not be opened. ${staged.note}")
+                continue
+            }
+            val passwords = listOfNotNull(staged.password)
+            when (val extracted = extractor.extract(staged.bytes, staged.fileName, passwords)) {
+                is JvmExtractor.Result.Text -> {
+                    val found = itemsFrom(extracted.text, staged.fileName)
+                    if (found.isEmpty()) {
+                        skipped += mapOf(
+                            "file" to staged.fileName,
+                            "why" to "Opened, but no dated amounts were found in it.",
+                        )
+                    }
+                    items += found
+                }
+                is JvmExtractor.Result.PasswordProblem -> {
+                    staged.state = PdfProbe.State.NEEDS_PASSWORD
+                    skipped += mapOf("file" to staged.fileName, "why" to "Needs a password.")
+                }
+                is JvmExtractor.Result.Failed ->
+                    skipped += mapOf("file" to staged.fileName, "why" to extracted.reason)
+            }
+        }
+
+        val summary = SpendSummary.from(items)
+        session.summary = summary
+        ctx.json(summaryPayload(summary) + mapOf("skipped" to skipped))
+    }
+
+    /**
+     * Turn one document's text into spend rows.
+     *
+     * Statements are tried first because they yield many rows and are unambiguous when they
+     * parse. A document that produces no transactions is treated as a single receipt or bill.
+     * Only outflows become spend: a credit is money arriving, and charting it as spending
+     * would double-count the month.
+     */
+    internal fun itemsFrom(text: String, fileName: String): List<SpendItem> {
+        val source = if (looksLikeCard(text)) StatementSource.CREDIT_CARD else StatementSource.BANK
+        val statement = BankParser.parse(text, source)
+        if (statement.transactions.isNotEmpty()) {
+            return statement.transactions.filter { it.isDebit }.map { txn ->
+                val hit = categorizer.classify(txn)
+                SpendItem(
+                    date = txn.date,
+                    merchant = txn.description.ifBlank { "(no description)" },
+                    amount = txn.amount,
+                    category = hit.category,
+                    matchedOn = hit.matchedOn,
+                    confident = hit.confident,
+                    source = fileName,
+                )
+            }
+        }
+
+        val invoice = InvoiceParser.parse(text, fileName)
+        val amount = invoice.totalGrand ?: invoice.taxable ?: return emptyList()
+        val date = invoice.date ?: return emptyList()
+        val merchant = invoice.partyName ?: fileName.substringBeforeLast('.')
+        val hit = categorizer.classify(merchant, text.take(400))
+        return listOf(
+            SpendItem(
+                date = date,
+                merchant = merchant,
+                amount = amount,
+                category = hit.category,
+                matchedOn = hit.matchedOn,
+                confident = hit.confident && invoice.partyName != null,
+                source = fileName,
+            ),
+        )
+    }
+
+    private fun looksLikeCard(text: String): Boolean {
+        val lower = text.lowercase()
+        return CARD_MARKERS.count { it in lower } >= 2
+    }
+
+    private fun summaryPayload(summary: SpendSummary) = mapOf(
+        "total" to summary.total.toPlainString(),
+        "count" to summary.items.size,
+        "needsReview" to summary.needsReview.size,
+        "byCategory" to summary.byCategory.map {
+            mapOf(
+                "key" to it.category.name,
+                "label" to it.category.label,
+                "slot" to it.category.paletteSlot,
+                "total" to it.total.toPlainString(),
+                "count" to it.count,
+            )
+        },
+        "byMonth" to summary.byMonth.map {
+            mapOf(
+                "month" to it.month.toString(),
+                "label" to monthLabel(it.month),
+                "total" to it.total.toPlainString(),
+                "count" to it.count,
+            )
+        },
+        "items" to summary.items.map {
+            mapOf(
+                "date" to it.date.toString(),
+                "merchant" to it.merchant,
+                "amount" to it.amount.toPlainString(),
+                "category" to it.category.name,
+                "categoryLabel" to it.category.label,
+                "slot" to it.category.paletteSlot,
+                "matchedOn" to it.matchedOn,
+                "confident" to it.confident,
+                "source" to it.source,
+            )
+        },
+    )
+
+    // ── loans ────────────────────────────────────────────────────────────────────
+
+    private fun saveLoan(ctx: Context) {
+        val id = ctx.formParam("id").orEmpty().ifBlank { java.util.UUID.randomUUID().toString() }
+        val existing = loans.all().firstOrNull { it.id == id }
+        val loan = Loan(
+            id = id,
+            counterparty = ctx.formParam("counterparty").orEmpty().trim()
+                .ifBlank { throw IllegalArgumentException("Who is the loan with?") },
+            direction = LoanDirection.valueOf(ctx.formParam("direction") ?: "GIVEN"),
+            principal = money(ctx.formParam("principal"), "principal"),
+            annualRatePct = ctx.formParam("annualRatePct").orEmpty().trim()
+                .ifBlank { "0" }.let { BigDecimal(it) },
+            startDate = LocalDate.parse(ctx.formParam("startDate") ?: LocalDate.now().toString()),
+            termMonths = ctx.formParam("termMonths").orEmpty().trim().toIntOrNull() ?: 12,
+            // Editing the terms of a loan must not erase the payments already recorded
+            // against it — those are history, not settings.
+            repayments = existing?.repayments ?: emptyList(),
+            note = ctx.formParam("note").orEmpty().trim(),
+        )
+        loans.save(loan)
+        ctx.json(loanPayload())
+    }
+
+    private fun addRepayment(ctx: Context) {
+        val id = ctx.formParam("id") ?: throw IllegalArgumentException("Which loan?")
+        val loan = loans.all().firstOrNull { it.id == id }
+            ?: throw IllegalArgumentException("That loan no longer exists.")
+        val repayment = Repayment(
+            date = LocalDate.parse(ctx.formParam("date") ?: LocalDate.now().toString()),
+            amount = money(ctx.formParam("amount"), "repayment amount"),
+            note = ctx.formParam("note").orEmpty().trim(),
+        )
+        loans.save(loan.copy(repayments = loan.repayments + repayment))
+        ctx.json(loanPayload())
+    }
+
+    private fun deleteLoan(ctx: Context) {
+        loans.delete(ctx.formParam("id").orEmpty())
+        ctx.json(loanPayload())
+    }
+
+    private fun money(raw: String?, what: String): BigDecimal {
+        val cleaned = raw.orEmpty().replace(",", "").replace("₹", "").trim()
+        val value = cleaned.toBigDecimalOrNull()
+            ?: throw IllegalArgumentException("Enter a number for the $what.")
+        if (value.signum() <= 0) throw IllegalArgumentException("The $what must be more than zero.")
+        return value
+    }
+
+    private fun loanPayload(): Map<String, Any> {
+        val today = LocalDate.now()
+        val book = LoanBook(loans.all())
+        val outstanding = book.outstanding(today)
+        return mapOf(
+            "loans" to book.loans.map { loan ->
+                val balance = loan.balanceOn(today)
+                mapOf(
+                    "id" to loan.id,
+                    "counterparty" to loan.counterparty,
+                    "direction" to loan.direction.name,
+                    "directionLabel" to loan.direction.label,
+                    "principal" to loan.principal.toPlainString(),
+                    "annualRatePct" to loan.annualRatePct.toPlainString(),
+                    "startDate" to loan.startDate.toString(),
+                    "termMonths" to loan.termMonths,
+                    "note" to loan.note,
+                    "emi" to loan.emi().toPlainString(),
+                    "outstandingPrincipal" to balance.outstandingPrincipal.toPlainString(),
+                    "interestOutstanding" to balance.interestOutstanding.toPlainString(),
+                    "payoff" to balance.payoff.toPlainString(),
+                    "totalRepaid" to balance.totalRepaid.toPlainString(),
+                    "settled" to balance.settled,
+                    "nextDue" to loan.nextDue(today)?.let {
+                        mapOf("date" to it.dueDate.toString(), "amount" to it.due.toPlainString())
+                    },
+                    "repayments" to loan.repayments.sortedBy { it.date }.map {
+                        mapOf(
+                            "date" to it.date.toString(),
+                            "amount" to it.amount.toPlainString(),
+                            "note" to it.note,
+                        )
+                    },
+                    "schedule" to loan.schedule().map {
+                        mapOf(
+                            "no" to it.instalmentNo,
+                            "dueDate" to it.dueDate.toString(),
+                            "due" to it.due.toPlainString(),
+                            "interest" to it.interest.toPlainString(),
+                            "principal" to it.principal.toPlainString(),
+                            "balanceAfter" to it.balanceAfter.toPlainString(),
+                        )
+                    },
+                )
+            },
+            "owedToYou" to outstanding.getValue(LoanDirection.GIVEN).toPlainString(),
+            "owedByYou" to outstanding.getValue(LoanDirection.RECEIVED).toPlainString(),
+            "netPosition" to book.netPosition(today).toPlainString(),
+        )
+    }
+
+    private fun cashFlow(session: Session): Map<String, Any> {
+        val summary = session.summary ?: SpendSummary.from(emptyList())
+        val rows = LoanBook(loans.all()).cashFlow(summary)
+        return mapOf(
+            "months" to rows.map {
+                mapOf(
+                    "month" to it.month.toString(),
+                    "label" to monthLabel(it.month),
+                    "spending" to it.spending.toPlainString(),
+                    "loansDisbursed" to it.loansDisbursed.toPlainString(),
+                    "loansBorrowed" to it.loansBorrowed.toPlainString(),
+                    "repaymentsReceived" to it.repaymentsReceived.toPlainString(),
+                    "repaymentsPaid" to it.repaymentsPaid.toPlainString(),
+                    "inflow" to it.inflow.toPlainString(),
+                    "outflow" to it.outflow.toPlainString(),
+                    "net" to it.net.toPlainString(),
+                )
+            },
+        )
+    }
+
+    companion object {
+        private val CARD_MARKERS = listOf(
+            "credit card", "card statement", "total amount due", "minimum amount due",
+            "statement period", "available credit limit", "reward points", "card number",
+        )
+        private val MONTH_FORMAT = DateTimeFormatter.ofPattern("MMM yyyy")
+
+        private fun monthLabel(month: YearMonth): String = month.atDay(1).format(MONTH_FORMAT)
+    }
+}

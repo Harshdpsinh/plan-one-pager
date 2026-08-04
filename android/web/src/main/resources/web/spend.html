@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spend Analysis — Gohil Bookkeeper</title>
+<!--
+  Inline everything. This server makes no outbound connections and is meant to work on a
+  machine with no internet at all, so a CDN chart library would be a broken link exactly when
+  it matters. The charts below are plain SVG for the same reason.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9; --card: #fff; --ink: #14181f; --muted: #666e7a;
+    --line: #dfe3e8; --accent: #1b5e4a; --accent-ink: #fff;
+    --warn: #8a5a00; --warn-bg: #fff8e6; --err: #a11; --err-bg: #fdf0f0;
+    --ok: #16663f; --ok-bg: #eef7f1;
+    /* Chart surface and the validated categorical slots. Light steps. */
+    --surface-1: #fcfcfb;
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+    --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
+    --series-0: #8b8f96;   /* Uncategorised — deliberately neutral, not a categorical hue */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #14171c; --card: #1c2027; --ink: #e8eaed; --muted: #9aa3ae;
+      --line: #2c323b; --accent: #4bbd91; --accent-ink: #08130f;
+      --warn: #e0b45c; --warn-bg: #2a2415; --err: #f08d8d; --err-bg: #2c1a1a;
+      --ok: #7fd6a8; --ok-bg: #16261e;
+      --surface-1: #1a1a19;
+      /* The same eight hues stepped for the dark surface, not an automatic flip. */
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+      --series-0: #9aa0a8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 96px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  h3 { font-size: .9rem; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: .92rem; }
+  .sub a { color: var(--accent); }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 14px;
+  }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], input[type=password], input[type=number], input[type=date], select {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 180px; }
+  button {
+    background: var(--accent); color: var(--accent-ink); border: 0;
+    border-radius: 8px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button.small { padding: 6px 12px; font-size: .84rem; }
+  .hint { font-size: .82rem; color: var(--muted); margin-top: 6px; }
+  .note { border-radius: 8px; padding: 11px 13px; font-size: .87rem; margin: 10px 0; }
+  .note.warn { background: var(--warn-bg); color: var(--warn); }
+  .note.err  { background: var(--err-bg);  color: var(--err); }
+  .note.ok   { background: var(--ok-bg);   color: var(--ok); }
+
+  /* ── drop zone ─────────────────────────────────────────────────────── */
+  .drop {
+    border: 2px dashed var(--line); border-radius: 12px; padding: 34px 18px;
+    text-align: center; color: var(--muted); cursor: pointer; transition: .15s;
+    background: var(--bg);
+  }
+  .drop.over { border-color: var(--accent); color: var(--ink); background: var(--ok-bg); }
+  .drop strong { display: block; color: var(--ink); font-size: 1rem; margin-bottom: 4px; }
+
+  /* ── file rows ─────────────────────────────────────────────────────── */
+  .file { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; margin-top: 10px; }
+  .file.locked { border-color: var(--warn); background: var(--warn-bg); }
+  .file .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .file .name { font-weight: 600; flex: 1 1 auto; word-break: break-all; }
+  .badge {
+    font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok);
+  }
+  .badge.lock { background: transparent; color: var(--warn); border: 1px solid currentColor; }
+  .badge.bad  { background: var(--err-bg); color: var(--err); }
+  .unlock { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .unlock input[type=password] { flex: 1 1 200px; width: auto; }
+  .unlock label { margin: 0; display: flex; gap: 6px; align-items: center; font-size: .8rem; }
+
+  /* ── charts ────────────────────────────────────────────────────────── */
+  /* Cards size to their own content — a short bar chart must not be padded out to match
+     the height of a tall donut beside it. */
+  .charts { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .chart { flex: 1 1 400px; min-width: 300px; background: var(--surface-1);
+           border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .chart h2 { margin-bottom: 2px; }
+  .chart .cap { font-size: .8rem; color: var(--muted); margin: 0 0 10px; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; font-size: .82rem; }
+  .legend span { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .hero { font-size: 2rem; font-weight: 700; letter-spacing: -.02em; }
+  .hero-cap { color: var(--muted); font-size: .85rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  .scroll { overflow-x: auto; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.wrap-cell { white-space: normal; min-width: 180px; }
+  .tag { font-size: .75rem; color: var(--muted); }
+  .neg { color: var(--err); }
+  .pos { color: var(--ok); }
+
+  #tip {
+    position: fixed; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; font-size: .82rem; box-shadow: 0 4px 14px rgba(0,0,0,.16);
+    z-index: 20; max-width: 260px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Spend Analysis</h1>
+  <p class="sub">
+    Everything below runs on this machine. Nothing is uploaded anywhere.
+    · <a href="/">GST bookkeeping →</a>
+  </p>
+
+  <!-- ── 1. Upload ──────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>1 · Drop your statements, bills and receipts</h2>
+    <div class="drop" id="drop">
+      <strong>Drag files here</strong>
+      or click to choose — bank statements, credit-card bills, invoices, receipts (PDF, JPG, PNG)
+    </div>
+    <input type="file" id="picker" multiple hidden
+           accept=".pdf,.jpg,.jpeg,.png,.webp,.heic">
+    <div id="files"></div>
+    <div class="row" style="margin-top:14px; align-items:center">
+      <div style="flex:0 0 auto"><button id="analyse" disabled>Analyse spending</button></div>
+      <div style="flex:0 0 auto"><button class="ghost small" id="clear">Clear files</button></div>
+      <div style="flex:1 1 auto; text-align:right" class="hint" id="pwState"></div>
+    </div>
+    <div id="uploadMsg"></div>
+  </div>
+
+  <!-- ── 2. Dashboard ───────────────────────────────────────────────── -->
+  <div id="dash" hidden>
+    <div class="card">
+      <div class="row">
+        <div>
+          <div class="hero-cap">Total analysed spending</div>
+          <div class="hero" id="grandTotal">—</div>
+        </div>
+        <div>
+          <div class="hero-cap">Transactions</div>
+          <div class="hero" id="txnCount">—</div>
+        </div>
+        <div>
+          <div class="hero-cap">Need a second look</div>
+          <div class="hero" id="reviewCount">—</div>
+        </div>
+      </div>
+      <div id="skipped"></div>
+    </div>
+
+    <div class="charts">
+      <div class="chart">
+        <h2>Where the money went</h2>
+        <p class="cap">Share of total spending by category.</p>
+        <svg id="donut" viewBox="0 0 264 264" role="img" aria-label="Spending by category"></svg>
+        <div class="legend" id="donutLegend"></div>
+      </div>
+      <div class="chart">
+        <h2>Month by month</h2>
+        <p class="cap">Total spending per month.</p>
+        <svg id="bars" viewBox="0 0 420 260" role="img" aria-label="Spending by month"></svg>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Category totals</h2>
+      <div class="scroll">
+        <table id="catTable"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Every transaction</h2>
+      <p class="hint" style="margin-top:0">
+        “Matched on” shows the keyword that decided the category, so a wrong guess is fixable
+        by editing the rule rather than guessing at a model.
+      </p>
+      <div class="scroll">
+        <table id="itemTable"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 3. Loans ───────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>2 · Personal loans</h2>
+    <p class="hint" style="margin-top:0">
+      Money lent out or borrowed. Kept out of the spending charts on purpose — lending
+      ₹50,000 is not an expense, the money is still yours. It shows up in cash flow instead.
+    </p>
+    <div class="row">
+      <div>
+        <div class="hero-cap">Owed to you</div>
+        <div class="hero" id="owedToYou">—</div>
+      </div>
+      <div>
+        <div class="hero-cap">You owe</div>
+        <div class="hero" id="owedByYou">—</div>
+      </div>
+      <div>
+        <div class="hero-cap">Net position</div>
+        <div class="hero" id="netPosition">—</div>
+      </div>
+    </div>
+
+    <h3>Add or update a loan</h3>
+    <form id="loanForm">
+      <input type="hidden" name="id" id="loanId">
+      <div class="row">
+        <div>
+          <label for="counterparty">Person or party</label>
+          <input type="text" id="counterparty" name="counterparty" required placeholder="e.g. Ramesh Patel">
+        </div>
+        <div>
+          <label for="direction">Direction</label>
+          <select id="direction" name="direction">
+            <option value="GIVEN">Given — I lent this money</option>
+            <option value="RECEIVED">Received — I borrowed this money</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="principal">Principal (₹)</label>
+          <input type="number" id="principal" name="principal" step="0.01" min="0" required>
+        </div>
+        <div>
+          <label for="annualRatePct">Interest % per year</label>
+          <input type="number" id="annualRatePct" name="annualRatePct" step="0.01" min="0" value="0">
+        </div>
+        <div>
+          <label for="startDate">Start date</label>
+          <input type="date" id="startDate" name="startDate" required>
+        </div>
+        <div>
+          <label for="termMonths">Term (months)</label>
+          <input type="number" id="termMonths" name="termMonths" min="1" value="12">
+        </div>
+      </div>
+      <label for="loanNote">Note</label>
+      <input type="text" id="loanNote" name="note" placeholder="optional">
+      <div style="margin-top:14px; display:flex; gap:10px">
+        <button type="submit">Save loan</button>
+        <button type="button" class="ghost" id="loanReset">Clear form</button>
+      </div>
+    </form>
+    <div id="loanMsg"></div>
+    <div id="loanList"></div>
+  </div>
+
+  <!-- ── 4. Cash flow ───────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>3 · Net cash flow</h2>
+    <p class="hint" style="margin-top:0">
+      Spending and loan movements together. Analyse some statements above and the spending
+      column fills in.
+    </p>
+    <div class="scroll"><table id="flowTable"></table></div>
+  </div>
+
+  <!-- ── 5. Passwords ───────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Remembered passwords</h2>
+    <p class="hint" style="margin-top:0" id="pwDetail"></p>
+    <button class="ghost small" id="forget">Forget every remembered password</button>
+  </div>
+</div>
+
+<div id="tip"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+const inr2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money  = (v) => '₹' + inr.format(Number(v || 0));
+const money2 = (v) => '₹' + inr2.format(Number(v || 0));
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const slotVar = (slot) => `var(--series-${slot})`;
+
+let latest = null;
+
+// ── tooltip ──────────────────────────────────────────────────────────────
+const tip = $('tip');
+function bindTip(el, html) {
+  el.addEventListener('pointerenter', () => { tip.innerHTML = html; tip.style.opacity = 1; });
+  el.addEventListener('pointermove', (e) => {
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8) + 'px';
+    tip.style.top = (e.clientY + 16) + 'px';
+  });
+  el.addEventListener('pointerleave', () => { tip.style.opacity = 0; });
+}
+
+// ── uploads ──────────────────────────────────────────────────────────────
+const drop = $('drop'), picker = $('picker');
+drop.addEventListener('click', () => picker.click());
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files.length) send(e.dataTransfer.files);
+});
+picker.addEventListener('change', () => { if (picker.files.length) send(picker.files); picker.value = ''; });
+
+async function send(fileList) {
+  const body = new FormData();
+  for (const f of fileList) body.append('files', f);
+  $('uploadMsg').innerHTML = '<div class="note">Checking each file…</div>';
+  const res = await fetch('/api/spend/upload', { method: 'POST', body });
+  const data = await res.json();
+  if (!res.ok) { $('uploadMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`; return; }
+  $('uploadMsg').innerHTML = '';
+  renderFiles(data);
+  loadPasswordState();
+}
+
+/**
+ * One row per file. A password box appears only on the files that are actually encrypted —
+ * that is the whole point of probing before parsing.
+ */
+function renderFiles(data) {
+  const host = $('files');
+  host.innerHTML = '';
+  for (const f of data.files) {
+    const row = document.createElement('div');
+    row.className = 'file' + (f.needsPassword ? ' locked' : '');
+    const badge =
+      f.state === 'NEEDS_PASSWORD' ? '<span class="badge lock">Password needed</span>'
+      : f.state === 'UNREADABLE'   ? '<span class="badge bad">Cannot open</span>'
+      : f.state === 'UNLOCKED_FROM_STORE' ? '<span class="badge">Unlocked</span>'
+      : f.state === 'NOT_A_PDF'    ? '<span class="badge">Image</span>'
+      :                              '<span class="badge">Ready</span>';
+
+    row.innerHTML = `
+      <div class="top">
+        <span class="name">${esc(f.fileName)}</span>
+        ${badge}
+        <button class="ghost small" data-remove="${f.fileHash}">Remove</button>
+      </div>
+      ${f.note ? `<div class="hint">${esc(f.note)}</div>` : ''}
+      ${f.needsPassword ? `
+        <div class="unlock">
+          <input type="password" placeholder="Password for ${esc(f.fileName)}"
+                 data-pw="${f.fileHash}" autocomplete="off">
+          <label><input type="checkbox" data-remember="${f.fileHash}" checked> Remember it</label>
+          <button class="small" data-unlock="${f.fileHash}">Unlock</button>
+        </div>` : ''}
+    `;
+    host.appendChild(row);
+  }
+
+  host.querySelectorAll('[data-unlock]').forEach(b => b.onclick = () => unlock(b.dataset.unlock));
+  host.querySelectorAll('[data-pw]').forEach(i => i.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); unlock(i.dataset.pw); }
+  });
+  host.querySelectorAll('[data-remove]').forEach(b => b.onclick = async () => {
+    const body = new FormData(); body.append('fileHash', b.dataset.remove);
+    renderFiles(await (await fetch('/api/spend/remove', { method: 'POST', body })).json());
+  });
+
+  $('analyse').disabled = data.files.length === 0;
+  if (data.needsPassword > 0) {
+    $('uploadMsg').innerHTML =
+      `<div class="note warn">${data.needsPassword} file(s) are protected. ` +
+      `Enter the password for each one above — the others need nothing.</div>`;
+  }
+}
+
+async function unlock(hash) {
+  const input = document.querySelector(`[data-pw="${hash}"]`);
+  const remember = document.querySelector(`[data-remember="${hash}"]`);
+  const body = new FormData();
+  body.append('fileHash', hash);
+  body.append('password', input.value);
+  body.append('remember', remember && remember.checked ? 'true' : 'false');
+  const data = await (await fetch('/api/spend/unlock', { method: 'POST', body })).json();
+  renderFiles(data.files);
+  if (!data.ok) $('uploadMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`;
+  loadPasswordState();
+}
+
+$('clear').onclick = async () => {
+  for (const b of document.querySelectorAll('[data-remove]')) b.click();
+  $('files').innerHTML = ''; $('analyse').disabled = true; $('dash').hidden = true;
+};
+
+// ── analysis ─────────────────────────────────────────────────────────────
+$('analyse').onclick = async () => {
+  $('analyse').disabled = true;
+  $('uploadMsg').innerHTML = '<div class="note">Reading and categorising…</div>';
+  const res = await fetch('/api/spend/analyse', { method: 'POST' });
+  const data = await res.json();
+  $('analyse').disabled = false;
+  if (!res.ok) { $('uploadMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`; return; }
+  $('uploadMsg').innerHTML = '';
+  latest = data;
+  renderDashboard(data);
+  loadCashFlow();
+};
+
+function renderDashboard(d) {
+  $('dash').hidden = false;
+  $('grandTotal').textContent = money(d.total);
+  $('txnCount').textContent = d.count;
+  $('reviewCount').textContent = d.needsReview;
+
+  $('skipped').innerHTML = (d.skipped || []).length === 0 ? '' :
+    '<div class="note warn">' + d.skipped.map(s =>
+      `<div><strong>${esc(s.file)}</strong> — ${esc(s.why)}</div>`).join('') + '</div>';
+
+  drawDonut(d.byCategory, Number(d.total));
+  drawBars(d.byMonth);
+  drawCategoryTable(d.byCategory, Number(d.total));
+  drawItemTable(d.items);
+}
+
+/**
+ * Donut, drawn in fixed category order rather than by size.
+ *
+ * The palette is validated for *adjacent* pairs, so neighbouring slices must be neighbouring
+ * slots. Sorting slices by value would put arbitrary hues side by side and throw that away.
+ * The table below is sorted by value instead, which is where ranking actually belongs.
+ */
+function drawDonut(cats, total) {
+  const svg = $('donut');
+  svg.innerHTML = '';
+  // Slot 0 is the neutral "we don't know" bucket and belongs at the end of the ring and the
+  // legend, not at the head of it.
+  const rank = (c) => (c.slot === 0 ? 99 : c.slot);
+  const shown = cats.filter(c => Number(c.total) > 0).sort((a, b) => rank(a) - rank(b));
+  if (!shown.length || total <= 0) { svg.innerHTML = '<text x="10" y="30" fill="currentColor">No spending found.</text>'; return; }
+
+  const cx = 132, cy = 132, r = 100, inner = 60;
+  let angle = -Math.PI / 2;
+  const ns = 'http://www.w3.org/2000/svg';
+
+  for (const c of shown) {
+    const share = Number(c.total) / total;
+    // A 2px surface gap between fills, per the mark spec — it is also what keeps two
+    // similar hues from reading as one wedge.
+    const sweep = share * Math.PI * 2;
+    const a0 = angle, a1 = angle + sweep;
+    angle = a1;
+
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', arc(cx, cy, r, inner, a0, a1));
+    path.setAttribute('fill', slotVar(c.slot));
+    path.setAttribute('stroke', 'var(--surface-1)');
+    path.setAttribute('stroke-width', '2');
+    bindTip(path, `<strong>${esc(c.label)}</strong><br>${money2(c.total)} · ${(share * 100).toFixed(1)}% · ${c.count} txn`);
+    svg.appendChild(path);
+
+    // Direct labels on anything worth naming. Three light-mode slots sit below 3:1 against
+    // the surface, which obliges visible labels or a table view — this ships both.
+    if (share >= 0.06) {
+      const mid = (a0 + a1) / 2;
+      const lr = (r + inner) / 2;
+      const t = document.createElementNS(ns, 'text');
+      t.setAttribute('x', cx + Math.cos(mid) * lr);
+      t.setAttribute('y', cy + Math.sin(mid) * lr + 4);
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('font-size', '11');
+      t.setAttribute('font-weight', '700');
+      t.setAttribute('fill', '#fff');
+      t.setAttribute('paint-order', 'stroke');
+      t.setAttribute('stroke', 'rgba(0,0,0,.45)');
+      t.setAttribute('stroke-width', '3');
+      t.textContent = Math.round(share * 100) + '%';
+      svg.appendChild(t);
+    }
+  }
+
+  const centre = document.createElementNS(ns, 'text');
+  centre.setAttribute('x', cx); centre.setAttribute('y', cy - 2);
+  centre.setAttribute('text-anchor', 'middle');
+  centre.setAttribute('font-size', '18'); centre.setAttribute('font-weight', '700');
+  centre.setAttribute('fill', 'currentColor');
+  centre.textContent = money(total);
+  svg.appendChild(centre);
+
+  const sub = document.createElementNS(ns, 'text');
+  sub.setAttribute('x', cx); sub.setAttribute('y', cy + 15);
+  sub.setAttribute('text-anchor', 'middle'); sub.setAttribute('font-size', '11');
+  sub.setAttribute('fill', 'currentColor'); sub.setAttribute('opacity', '.65');
+  sub.textContent = 'total';
+  svg.appendChild(sub);
+
+  // Identity is never colour alone: a legend is always present.
+  $('donutLegend').innerHTML = shown.map(c =>
+    `<span><i class="swatch" style="background:${slotVar(c.slot)}"></i>${esc(c.label)}</span>`).join('');
+}
+
+function arc(cx, cy, r, ri, a0, a1) {
+  const large = (a1 - a0) > Math.PI ? 1 : 0;
+  const p = (rad, a) => [cx + Math.cos(a) * rad, cy + Math.sin(a) * rad];
+  const [x0, y0] = p(r, a0), [x1, y1] = p(r, a1);
+  const [x2, y2] = p(ri, a1), [x3, y3] = p(ri, a0);
+  return `M${x0} ${y0} A${r} ${r} 0 ${large} 1 ${x1} ${y1} L${x2} ${y2} A${ri} ${ri} 0 ${large} 0 ${x3} ${y3} Z`;
+}
+
+/** One measure, one series — so one colour and no legend box; the title names it. */
+function drawBars(months) {
+  const svg = $('bars');
+  svg.innerHTML = '';
+  if (!months.length) { svg.innerHTML = '<text x="10" y="30" fill="currentColor">No months to show.</text>'; return; }
+  const ns = 'http://www.w3.org/2000/svg';
+  const L = 10, R = 10, T = 22, B = 34, W = 420, H = 260;
+  const plotW = W - L - R, plotH = H - T - B;
+  const max = Math.max(...months.map(m => Number(m.total))) || 1;
+  const step = plotW / months.length;
+  const bw = Math.min(46, step * 0.62);
+
+  // A recessive baseline, no gridlines: the value labels make gridlines redundant.
+  const base = document.createElementNS(ns, 'line');
+  base.setAttribute('x1', L); base.setAttribute('x2', W - R);
+  base.setAttribute('y1', T + plotH); base.setAttribute('y2', T + plotH);
+  base.setAttribute('stroke', 'currentColor'); base.setAttribute('opacity', '.2');
+  svg.appendChild(base);
+
+  months.forEach((m, i) => {
+    const h = Math.max(2, (Number(m.total) / max) * plotH);
+    const x = L + i * step + (step - bw) / 2;
+    const y = T + plotH - h;
+
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', y);
+    rect.setAttribute('width', bw); rect.setAttribute('height', h);
+    // 4px rounded data-end, anchored to the baseline.
+    rect.setAttribute('rx', 4);
+    rect.setAttribute('fill', 'var(--series-1)');
+    bindTip(rect, `<strong>${esc(m.label)}</strong><br>${money2(m.total)} · ${m.count} txn`);
+    svg.appendChild(rect);
+
+    const v = document.createElementNS(ns, 'text');
+    v.setAttribute('x', x + bw / 2); v.setAttribute('y', y - 6);
+    v.setAttribute('text-anchor', 'middle'); v.setAttribute('font-size', '10.5');
+    v.setAttribute('font-weight', '700'); v.setAttribute('fill', 'currentColor');
+    v.textContent = money(m.total);
+    svg.appendChild(v);
+
+    const lab = document.createElementNS(ns, 'text');
+    lab.setAttribute('x', x + bw / 2); lab.setAttribute('y', T + plotH + 18);
+    lab.setAttribute('text-anchor', 'middle'); lab.setAttribute('font-size', '11');
+    lab.setAttribute('fill', 'currentColor'); lab.setAttribute('opacity', '.7');
+    lab.textContent = m.label;
+    svg.appendChild(lab);
+  });
+}
+
+function drawCategoryTable(cats, total) {
+  const rows = cats.filter(c => Number(c.total) > 0);
+  $('catTable').innerHTML =
+    '<thead><tr><th>Category</th><th class="num">Total</th><th class="num">Share</th><th class="num">Transactions</th></tr></thead><tbody>' +
+    rows.map(c => `<tr>
+        <td><i class="swatch" style="background:${slotVar(c.slot)};display:inline-block;margin-right:7px"></i>${esc(c.label)}</td>
+        <td class="num">${money2(c.total)}</td>
+        <td class="num">${total > 0 ? (Number(c.total) / total * 100).toFixed(1) : '0.0'}%</td>
+        <td class="num">${c.count}</td>
+      </tr>`).join('') + '</tbody>';
+}
+
+function drawItemTable(items) {
+  $('itemTable').innerHTML =
+    '<thead><tr><th>Date</th><th>Merchant</th><th class="num">Amount</th><th>Category</th><th>Matched on</th><th>Source</th></tr></thead><tbody>' +
+    items.map(i => `<tr>
+        <td>${esc(i.date)}</td>
+        <td class="wrap-cell">${esc(i.merchant)}</td>
+        <td class="num">${money2(i.amount)}</td>
+        <td><i class="swatch" style="background:${slotVar(i.slot)};display:inline-block;margin-right:7px"></i>${esc(i.categoryLabel)}${i.confident ? '' : ' <span class="tag">(check)</span>'}</td>
+        <td class="tag">${esc(i.matchedOn || '—')}</td>
+        <td class="tag">${esc(i.source)}</td>
+      </tr>`).join('') + '</tbody>';
+}
+
+// ── loans ────────────────────────────────────────────────────────────────
+$('loanForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const res = await fetch('/api/spend/loans', { method: 'POST', body: new FormData(e.target) });
+  const data = await res.json();
+  if (!res.ok) { $('loanMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`; return; }
+  $('loanMsg').innerHTML = '';
+  e.target.reset(); $('loanId').value = '';
+  renderLoans(data);
+  loadCashFlow();
+};
+$('loanReset').onclick = () => { $('loanForm').reset(); $('loanId').value = ''; };
+
+function renderLoans(d) {
+  $('owedToYou').textContent = money(d.owedToYou);
+  $('owedByYou').textContent = money(d.owedByYou);
+  const net = Number(d.netPosition);
+  const el = $('netPosition');
+  el.textContent = money(d.netPosition);
+  el.className = 'hero ' + (net < 0 ? 'neg' : 'pos');
+
+  $('loanList').innerHTML = d.loans.length === 0
+    ? '<p class="hint">No loans recorded yet.</p>'
+    : d.loans.map(l => `
+      <div class="file">
+        <div class="top">
+          <span class="name">${esc(l.counterparty)}
+            <span class="tag">· ${esc(l.directionLabel)} · ${money2(l.principal)} @ ${esc(l.annualRatePct)}% · from ${esc(l.startDate)}</span>
+          </span>
+          <span class="badge${l.settled ? '' : ' lock'}">${l.settled ? 'Settled' : money(l.payoff) + ' outstanding'}</span>
+          <button class="ghost small" data-edit="${l.id}">Edit</button>
+          <button class="ghost small" data-del="${l.id}">Delete</button>
+        </div>
+        <div class="hint">
+          EMI ${money2(l.emi)} · repaid ${money2(l.totalRepaid)} ·
+          interest outstanding ${money2(l.interestOutstanding)}
+          ${l.nextDue ? ` · next due ${esc(l.nextDue.date)} (${money2(l.nextDue.amount)})` : ' · tenure complete'}
+          ${l.note ? ` · ${esc(l.note)}` : ''}
+        </div>
+        <div class="unlock">
+          <input type="date" data-rdate="${l.id}" style="flex:0 0 160px">
+          <input type="number" step="0.01" min="0" placeholder="Repayment ₹" data-ramt="${l.id}" style="flex:0 0 150px; width:auto">
+          <button class="small" data-repay="${l.id}">Record repayment</button>
+        </div>
+        ${l.repayments.length ? `<div class="scroll"><table>
+          <thead><tr><th>Repaid on</th><th class="num">Amount</th><th>Note</th></tr></thead>
+          <tbody>${l.repayments.map(r =>
+            `<tr><td>${esc(r.date)}</td><td class="num">${money2(r.amount)}</td><td>${esc(r.note)}</td></tr>`).join('')}
+          </tbody></table></div>` : ''}
+      </div>`).join('');
+
+  $('loanList').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    const body = new FormData(); body.append('id', b.dataset.del);
+    renderLoans(await (await fetch('/api/spend/loans/delete', { method: 'POST', body })).json());
+    loadCashFlow();
+  });
+  $('loanList').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+    const l = d.loans.find(x => x.id === b.dataset.edit);
+    $('loanId').value = l.id; $('counterparty').value = l.counterparty;
+    $('direction').value = l.direction; $('principal').value = l.principal;
+    $('annualRatePct').value = l.annualRatePct; $('startDate').value = l.startDate;
+    $('termMonths').value = l.termMonths; $('loanNote').value = l.note;
+    $('loanForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  $('loanList').querySelectorAll('[data-repay]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.repay;
+    const body = new FormData();
+    body.append('id', id);
+    body.append('date', document.querySelector(`[data-rdate="${id}"]`).value || new Date().toISOString().slice(0, 10));
+    body.append('amount', document.querySelector(`[data-ramt="${id}"]`).value);
+    const res = await fetch('/api/spend/loans/repayment', { method: 'POST', body });
+    const data = await res.json();
+    if (!res.ok) { $('loanMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`; return; }
+    renderLoans(data); loadCashFlow();
+  });
+}
+
+// ── cash flow ────────────────────────────────────────────────────────────
+async function loadCashFlow() {
+  const d = await (await fetch('/api/spend/cashflow')).json();
+  $('flowTable').innerHTML = d.months.length === 0
+    ? '<tbody><tr><td class="hint">Nothing to show yet.</td></tr></tbody>'
+    : '<thead><tr><th>Month</th><th class="num">Spending</th><th class="num">Lent out</th>' +
+      '<th class="num">Borrowed</th><th class="num">Repaid to you</th><th class="num">You repaid</th>' +
+      '<th class="num">Net</th></tr></thead><tbody>' +
+      d.months.map(m => `<tr>
+        <td>${esc(m.label)}</td>
+        <td class="num">${money2(m.spending)}</td>
+        <td class="num">${money2(m.loansDisbursed)}</td>
+        <td class="num">${money2(m.loansBorrowed)}</td>
+        <td class="num">${money2(m.repaymentsReceived)}</td>
+        <td class="num">${money2(m.repaymentsPaid)}</td>
+        <td class="num ${Number(m.net) < 0 ? 'neg' : 'pos'}">${money2(m.net)}</td>
+      </tr>`).join('') + '</tbody>';
+}
+
+// ── password store ───────────────────────────────────────────────────────
+async function loadPasswordState() {
+  const d = await (await fetch('/api/spend/passwords')).json();
+  $('pwState').textContent = d.remembered > 0 ? `${d.remembered} password(s) remembered` : '';
+  $('pwDetail').innerHTML = d.enabled
+    ? `${d.remembered} password(s) are stored, encrypted, in <code>${esc(d.location)}</code>. ` +
+      `They are never sent anywhere. Anyone who can log in as you on this computer could ` +
+      `decrypt them, so clear them if you share the machine.`
+    : 'Remembering is switched off — every protected file will ask each time.';
+}
+
+$('forget').onclick = async () => {
+  await fetch('/api/spend/passwords/forget', { method: 'POST' });
+  loadPasswordState();
+};
+
+// ── boot ─────────────────────────────────────────────────────────────────
+$('startDate').value = new Date().toISOString().slice(0, 10);
+fetch('/api/spend/loans').then(r => r.json()).then(renderLoans);
+loadCashFlow();
+loadPasswordState();
+</script>
+</body>
+</html>

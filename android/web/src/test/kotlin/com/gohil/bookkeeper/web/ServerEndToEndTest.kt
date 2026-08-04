@@ -40,16 +40,30 @@ class ServerEndToEndTest {
         .cookieHandler(CookieManager(null, CookiePolicy.ACCEPT_ALL))
         .build()
 
+    private lateinit var stateDir: java.nio.file.Path
+
     @BeforeTest
     fun start() {
-        server = BookkeeperServer()
+        // Everything persistent goes to a temp directory: a test must never read or write the
+        // developer's real password store or loan book.
+        stateDir = java.nio.file.Files.createTempDirectory("bk-test")
+        server = BookkeeperServer(
+            passwordStore = PasswordStore(
+                stateDir.resolve("passwords.enc"),
+                stateDir.resolve("passwords.key"),
+            ),
+            loanRepository = LoanRepository(stateDir.resolve("loans.json")),
+        )
         // Port 0 lets the OS pick a free one, so the test cannot collide with a real server.
         server.start("127.0.0.1", 0)
         port = server.port()
     }
 
     @AfterTest
-    fun stop() = server.stop()
+    fun stop() {
+        server.stop()
+        stateDir.toFile().deleteRecursively()
+    }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────
 

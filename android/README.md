@@ -129,12 +129,49 @@ single-use access token. Share that link only with your own devices; restarting 
 it.
 
 **Your files are never modified.** You upload copies, and download updated workbooks at the
-end — the originals on disk cannot be touched by construction. Passwords are held in memory
-for the run only: never written to disk, never logged, and the server makes no outbound
-connections at all.
+end — the originals on disk cannot be touched by construction. Nothing is logged, and the
+server makes no outbound connections at all.
 
-Statement passwords go in one box, one per line. Every protected PDF is tried against all of
-them, so several banks and several cards need no per-file fiddling.
+On the GST screen, statement passwords go in one box, one per line, and every protected PDF
+is tried against all of them. The Spend Analysis screen does it properly — see below.
+
+---
+
+## Spend Analysis (`/spend`)
+
+A second screen on the same server: drop in statements, card bills and receipts, and get
+categorised charts plus a personal loan book. It shares the GST screen's parsers, so a
+statement cannot read one way here and another way there.
+
+**Per-file passwords.** Every uploaded file is checked individually *before* anything is
+parsed. A file that is not encrypted is never asked about. A file that is encrypted gets its
+own prompt, naming that file. Once a password works it is remembered against the file's
+SHA-256 content hash, so the same document is never asked about again — including after the
+server is restarted, and including when the bank names every month's export `statement.pdf`.
+
+**What "remembered" costs, plainly.** The passwords are written to
+`~/.gohil-bookkeeper/passwords.enc`, encrypted with AES-256-GCM; the key is a separate file,
+`passwords.key`. Both are owner-only (0600 on macOS/Linux; on Windows they rely on your user
+profile's ACL, which is weaker). This protects against a backup agent or a search indexer
+scooping up a plaintext file of bank passwords, and against someone who gets one file but not
+the other. It does **not** protect against anyone who can already log in as you — they can
+read both and decrypt. That is a real reduction in safety versus retyping each time, and it
+is the direct price of "never ask me twice". Untick **Remember it** on any file to keep that
+one out, and **Forget every remembered password** wipes both files.
+
+The phone app does not use this: Android has a real keyring, and it keeps using it.
+
+**Loans.** Money lent out or borrowed, with principal, rate, term, an EMI figure and the
+planned amortisation. The balance shown is computed from the repayments you actually record —
+interest accrues daily on the reducing balance and each repayment clears interest before
+principal — not from the schedule. Loans stay out of the spending charts on purpose: lending
+₹50,000 is not an expense, the money is still yours. It appears in **Net cash flow** instead,
+alongside spending. The loan book is plain JSON at `~/.gohil-bookkeeper/loans.json`, readable
+in Notepad long after this app is gone.
+
+**Categories** are keyword rules, not a model — `core/.../spend/SpendCategorizer.kt`. Every
+row shows which keyword decided it, so a wrong guess is fixed by editing a list rather than
+retraining anything, and it needs no network.
 
 **OCR is optional here.** Text-based PDFs — nearly all bank statements and vendor invoices —
 work with no extra setup. Scans and photos need [Tesseract](https://github.com/tesseract-ocr/tesseract)
@@ -150,7 +187,7 @@ are easiest there.
 android/
   core/    pure Kotlin/JVM — xlsx writing, parsing, matching, categorisation, routing
   app/     Android — Compose UI, file pickers, PDF/OCR, keystore vault
-  web/     local server — Javalin + browser UI, reuses core
+  web/     local server — Javalin + browser UI (GST + spend analysis), reuses core
   tools/   verify_fixtures.py, independent workbook validation
 ```
 

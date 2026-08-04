@@ -37,6 +37,9 @@ fun main(args: Array<String>) {
     println("  Gohil Bookkeeper - local server")
     println("  -------------------------------")
     println("  Open: $url")
+    // ASCII only, deliberately: the Windows console default code page mangles anything else,
+    // and a launcher window full of question marks reads as a broken program.
+    println("  GST registers, and Spend Analysis + loans at the same address under /spend")
     if (options.exposeToNetwork) {
         println()
         println("  Reachable by other devices on this network.")
