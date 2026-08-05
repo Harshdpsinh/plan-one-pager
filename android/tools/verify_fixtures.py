@@ -142,6 +142,69 @@ def verify_sales(fixtures: Path) -> None:
     check("direct gst type", ws["P5"].value, "Direct".upper())
 
 
+def verify_ca_pack(fixtures: Path) -> None:
+    """The workbook that goes to the accountant, read by something other than what wrote it.
+
+    This one is written from scratch rather than spliced, so the failure mode is different:
+    not "a preserved part was damaged" but "the package we assembled is not a valid workbook".
+    openpyxl opening it, finding every sheet, and reading dates back as dates is the check.
+    """
+    wb = load(fixtures / "ca_pack.xlsx")
+    if not wb:
+        return
+
+    check(
+        "ca pack sheets",
+        wb.sheetnames,
+        [
+            "Summary", "Expenses", "Expense by category", "Investments",
+            "Sales (GST)", "Purchases (GST)", "Loans", "Cash flow",
+        ],
+    )
+
+    ws = wb["Expenses"]
+    # Two notes, a blank line, then the header — the layout the sheet builder promises.
+    header_row = 4
+    check(
+        "ca pack: expense headers",
+        [c.value for c in ws[header_row]],
+        ["Date", "Merchant / narration", "Amount", "Category",
+         "Matched on", "Needs check", "Source file"],
+    )
+    check("ca pack: expense rows + total", ws.max_row, header_row + 4)
+    # Settled rows come first, newest first; the flagged one is pushed to the end.
+    check("ca pack: dates are real dates", ws.cell(header_row + 1, 1).value, datetime(2026, 6, 7))
+    check("ca pack: amount is a number", ws.cell(header_row + 2, 3).value, 1240.0)
+    check("ca pack: flagged row is last", ws.cell(ws.max_row - 1, 6).value, "Yes - no rule matched")
+    check("ca pack: expense total", ws.cell(ws.max_row, 3).value, 5550.5)
+
+    # The SIP must be in Investments and nowhere near the expense total.
+    merchants = [ws.cell(r, 2).value for r in range(header_row + 1, ws.max_row)]
+    check("ca pack: no investment in expenses", any("PARAG" in (m or "") for m in merchants), False)
+
+    inv = wb["Investments"]
+    inv_header = 5  # three notes, blank, header
+    check("ca pack: investment headers start correctly", inv.cell(inv_header, 1).value, "Date")
+    check("ca pack: investment amount", inv.cell(inv_header + 1, 3).value, 10000.0)
+
+    sales = wb["Sales (GST)"]
+    sales_header = 5
+    check("ca pack: sales headers", [c.value for c in sales[sales_header]][:9],
+          ["Date", "GST NO", "Invoice no", "Name", "Taxable", "CGST", "SGST", "IGST", "Total"])
+    check("ca pack: taxable value", sales.cell(sales_header + 1, 5).value, 40000.0)
+    check("ca pack: cgst", sales.cell(sales_header + 1, 6).value, 3600.0)
+    # IGST was never read. It must be empty, not zero — a zero here is a wrong GST figure.
+    check("ca pack: unread IGST stays blank", sales.cell(sales_header + 1, 8).value, None)
+    check("ca pack: gst type", sales.cell(sales_header + 1, 12).value, "RCM")
+
+    flow = wb["Cash flow"]
+    flow_header = 4
+    check("ca pack: cash flow has an Invested column",
+          [c.value for c in flow[flow_header]][:3], ["Month", "Expenses", "Invested"])
+
+    check("ca pack: money format applied", ws.cell(header_row + 1, 3).number_format, "#,##0.00")
+
+
 def verify_web_output(root: Path) -> None:
     """The workbook the local web server hands back must be as sound as the phone app's."""
     path = root / "web/build/web-fixtures/web_purchase_after.xlsx"
@@ -168,6 +231,18 @@ def verify_web_output(root: Path) -> None:
     if cached:
         check("web: TOTAL GRAND", cached["Jun"]["M4"].value, 5310.0)
 
+    # The CA pack as the server actually hands it over, not as the unit test builds it.
+    pack_path = root / "web/build/web-fixtures/web_ca_pack.xlsx"
+    if pack_path.exists():
+        pack = load(pack_path)
+        if pack:
+            check("web ca pack: sheets", len(pack.sheetnames), 8)
+            expenses = pack["Expenses"]
+            # Four debits on the fixture statement; the SIP is not one of them.
+            check("web ca pack: expense rows + total", expenses.max_row, 9)
+            check("web ca pack: total is the four expenses", expenses.cell(9, 3).value, 14749.5)
+            check("web ca pack: SIP is in Investments", pack["Investments"].cell(6, 3).value, 10000.0)
+
 
 def main() -> int:
     fixtures = Path(sys.argv[1] if len(sys.argv) > 1 else "core/build/fixtures")
@@ -177,6 +252,7 @@ def main() -> int:
     verify_purchase(fixtures)
     verify_new_tab(fixtures)
     verify_sales(fixtures)
+    verify_ca_pack(fixtures)
     # fixtures is <root>/core/build/fixtures; the web output lives under the same root.
     verify_web_output(fixtures.parent.parent.parent)
 

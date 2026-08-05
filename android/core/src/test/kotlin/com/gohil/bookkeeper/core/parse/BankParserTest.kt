@@ -110,4 +110,40 @@ class BankParserTest {
         assertTrue("612.50" !in description, "amounts do not belong in the name column")
         assertTrue("05/06/2025" !in description)
     }
+
+    @Test
+    fun `the year in the date is never mistaken for the amount`() {
+        // Regression: MONEY_TOKEN scanned the raw line, so 05/06/2026 contributed "2026".
+        // On a line with no running balance that became the transaction amount, and every
+        // June 2026 row would have been written as Rs 2,026.00.
+        val result = BankParser.parse("05/06/2026  POS IRCTC WEB BOOKING  3,410.50 DR", StatementSource.BANK)
+        val txn = result.transactions.single()
+        assertEquals("3410.50", txn.amount.toPlainString())
+        assertTrue(txn.isDebit)
+    }
+
+    @Test
+    fun `a reference number glued to a slash is not an amount`() {
+        // "UPI/SWIGGY LTD/8812" contributed 8812. With the year also counted the line had
+        // three "amounts", so the last-column-is-the-balance rule picked the reference as the
+        // transaction and the real figure as the balance.
+        val result = BankParser.parse("05/06/2026 UPI/SWIGGY LTD/8812 1,240.00 DR", StatementSource.BANK)
+        assertEquals("1240.00", result.transactions.single().amount.toPlainString())
+    }
+
+    @Test
+    fun `a genuine amount that looks like a year is still read`() {
+        // The fix works on shape, not magnitude. A real Rs 2,026 payment must survive.
+        val result = BankParser.parse("14/07/2025  NEFT DR VENDOR PAYMENT  2,026.00", StatementSource.BANK)
+        assertEquals("2026.00", result.transactions.single().amount.toPlainString())
+    }
+
+    @Test
+    fun `the running balance column is still found when one is present`() {
+        val result = BankParser.parse(
+            "05/06/2026  UPI/SWIGGY LTD/8812  1,240.00 DR  45,231.00",
+            StatementSource.BANK,
+        )
+        assertEquals("1240.00", result.transactions.single().amount.toPlainString())
+    }
 }

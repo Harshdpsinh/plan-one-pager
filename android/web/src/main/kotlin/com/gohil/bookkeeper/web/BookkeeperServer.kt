@@ -69,7 +69,12 @@ class BookkeeperServer(
             post("/api/process") { ctx -> handleProcess(ctx) }
             post("/api/write") { ctx -> handleWrite(ctx) }
             get("/api/download/{key}") { ctx -> handleDownload(ctx) }
-            spend.register(this) { ctx -> sessionOf(ctx).spend }
+            spend.register(
+                app = this,
+                sessionOf = { ctx -> sessionOf(ctx).spend },
+                // The CA pack wants the GST detail too, and it is already in this session.
+                gstOf = { ctx -> sessionOf(ctx).result },
+            )
             exception(Exception::class.java) { e, ctx ->
                 ctx.status(400).json(mapOf("error" to (e.message ?: "Something went wrong.")))
             }

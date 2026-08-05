@@ -166,16 +166,19 @@ data class Balance(
     val payoff: BigDecimal get() = (outstandingPrincipal + interestOutstanding).setScale(2, RoundingMode.HALF_UP)
 }
 
-/** Money in and money out for one month, loans and spending together. */
+/** Money in and money out for one month — spending, investments and loans together. */
 data class MonthlyCashFlow(
     val month: YearMonth,
     val spending: BigDecimal,
+    val invested: BigDecimal,
     val loansDisbursed: BigDecimal,
     val loansBorrowed: BigDecimal,
     val repaymentsReceived: BigDecimal,
     val repaymentsPaid: BigDecimal,
 ) {
-    val outflow: BigDecimal get() = spending + loansDisbursed + repaymentsPaid
+    // Investing and lending are outflows without being expenses. Both leave the bank account,
+    // so cash flow must count them; neither is consumption, so the spending charts must not.
+    val outflow: BigDecimal get() = spending + invested + loansDisbursed + repaymentsPaid
     val inflow: BigDecimal get() = loansBorrowed + repaymentsReceived
     val net: BigDecimal get() = inflow - outflow
 }
@@ -203,15 +206,21 @@ class LoanBook(val loans: List<Loan> = emptyList()) {
             .setScale(2, RoundingMode.HALF_UP)
     }
 
-    fun cashFlow(spend: SpendSummary, asOf: LocalDate = LocalDate.now()): List<MonthlyCashFlow> {
+    fun cashFlow(
+        spend: SpendSummary,
+        investments: InvestmentSummary = InvestmentSummary.from(emptyList()),
+        asOf: LocalDate = LocalDate.now(),
+    ): List<MonthlyCashFlow> {
         val months = sortedSetOf<YearMonth>()
         spend.byMonth.forEach { months += it.month }
+        investments.byMonth.forEach { months += it.month }
         loans.forEach { loan ->
             months += YearMonth.from(loan.startDate)
             loan.repayments.filter { !it.date.isAfter(asOf) }.forEach { months += YearMonth.from(it.date) }
         }
 
         val spendByMonth = spend.byMonth.associate { it.month to it.total }
+        val investedByMonth = investments.byMonth.associate { it.month to it.total }
         return months.map { month ->
             fun loansStarting(direction: LoanDirection) = loans
                 .filter { it.direction == direction && YearMonth.from(it.startDate) == month }
@@ -226,6 +235,7 @@ class LoanBook(val loans: List<Loan> = emptyList()) {
             MonthlyCashFlow(
                 month = month,
                 spending = spendByMonth[month] ?: BigDecimal.ZERO,
+                invested = investedByMonth[month] ?: BigDecimal.ZERO,
                 loansDisbursed = loansStarting(LoanDirection.GIVEN),
                 loansBorrowed = loansStarting(LoanDirection.RECEIVED),
                 repaymentsReceived = repaymentsIn(LoanDirection.GIVEN),

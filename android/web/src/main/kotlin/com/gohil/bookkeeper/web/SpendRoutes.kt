@@ -1,8 +1,13 @@
 package com.gohil.bookkeeper.web
 
+import com.gohil.bookkeeper.core.model.ProcessResult
 import com.gohil.bookkeeper.core.model.StatementSource
 import com.gohil.bookkeeper.core.parse.BankParser
 import com.gohil.bookkeeper.core.parse.InvoiceParser
+import com.gohil.bookkeeper.core.spend.CaExport
+import com.gohil.bookkeeper.core.spend.InvestmentItem
+import com.gohil.bookkeeper.core.spend.InvestmentRules
+import com.gohil.bookkeeper.core.spend.InvestmentSummary
 import com.gohil.bookkeeper.core.spend.Loan
 import com.gohil.bookkeeper.core.spend.LoanBook
 import com.gohil.bookkeeper.core.spend.LoanDirection
@@ -40,6 +45,7 @@ class SpendRoutes(
     class Session {
         val files = ConcurrentHashMap<String, Staged>()
         @Volatile var summary: SpendSummary? = null
+        @Volatile var investments: InvestmentSummary? = null
     }
 
     class Staged(
@@ -50,11 +56,20 @@ class SpendRoutes(
         @Volatile var note: String = "",
     )
 
-    fun register(app: Javalin, sessionOf: (Context) -> Session) {
+    /**
+     * @param gstOf the bookkeeping screen's result for the same browser session, so the CA
+     *   pack can carry the GST detail without asking for the invoices a second time.
+     */
+    fun register(
+        app: Javalin,
+        sessionOf: (Context) -> Session,
+        gstOf: (Context) -> ProcessResult? = { null },
+    ) {
         app.post("/api/spend/upload") { ctx -> upload(ctx, sessionOf(ctx)) }
         app.post("/api/spend/unlock") { ctx -> unlock(ctx, sessionOf(ctx)) }
         app.post("/api/spend/analyse") { ctx -> analyse(ctx, sessionOf(ctx)) }
         app.post("/api/spend/remove") { ctx -> remove(ctx, sessionOf(ctx)) }
+        app.get("/api/spend/export") { ctx -> export(ctx, sessionOf(ctx), gstOf(ctx)) }
         app.get("/api/spend/loans") { ctx -> ctx.json(loanPayload()) }
         app.post("/api/spend/loans") { ctx -> saveLoan(ctx) }
         app.post("/api/spend/loans/repayment") { ctx -> addRepayment(ctx) }
@@ -163,6 +178,7 @@ class SpendRoutes(
 
     private fun analyse(ctx: Context, session: Session) {
         val items = mutableListOf<SpendItem>()
+        val invested = mutableListOf<InvestmentItem>()
         val skipped = mutableListOf<Map<String, String>>()
 
         for ((_, staged) in session.files) {
@@ -178,13 +194,14 @@ class SpendRoutes(
             when (val extracted = extractor.extract(staged.bytes, staged.fileName, passwords)) {
                 is JvmExtractor.Result.Text -> {
                     val found = itemsFrom(extracted.text, staged.fileName)
-                    if (found.isEmpty()) {
+                    if (found.spend.isEmpty() && found.investments.isEmpty()) {
                         skipped += mapOf(
                             "file" to staged.fileName,
                             "why" to "Opened, but no dated amounts were found in it.",
                         )
                     }
-                    items += found
+                    items += found.spend
+                    invested += found.investments
                 }
                 is JvmExtractor.Result.PasswordProblem -> {
                     staged.state = PdfProbe.State.NEEDS_PASSWORD
@@ -196,27 +213,55 @@ class SpendRoutes(
         }
 
         val summary = SpendSummary.from(items)
+        val investmentSummary = InvestmentSummary.from(invested)
         session.summary = summary
-        ctx.json(summaryPayload(summary) + mapOf("skipped" to skipped))
+        session.investments = investmentSummary
+        ctx.json(
+            summaryPayload(summary) + investmentPayload(investmentSummary) +
+                mapOf("skipped" to skipped),
+        )
     }
 
+    /** What one document turned into. Investments are separated from spending at the source. */
+    data class Extracted(
+        val spend: List<SpendItem> = emptyList(),
+        val investments: List<InvestmentItem> = emptyList(),
+    )
+
     /**
-     * Turn one document's text into spend rows.
+     * Turn one document's text into spend and investment rows.
      *
      * Statements are tried first because they yield many rows and are unambiguous when they
      * parse. A document that produces no transactions is treated as a single receipt or bill.
-     * Only outflows become spend: a credit is money arriving, and charting it as spending
-     * would double-count the month.
+     * Only outflows are classified at all: a credit is money arriving, and charting it as
+     * spending would double-count the month.
      */
-    internal fun itemsFrom(text: String, fileName: String): List<SpendItem> {
+    internal fun itemsFrom(text: String, fileName: String): Extracted {
         val source = if (looksLikeCard(text)) StatementSource.CREDIT_CARD else StatementSource.BANK
         val statement = BankParser.parse(text, source)
         if (statement.transactions.isNotEmpty()) {
-            return statement.transactions.filter { it.isDebit }.map { txn ->
+            val spend = mutableListOf<SpendItem>()
+            val invested = mutableListOf<InvestmentItem>()
+            for (txn in statement.transactions.filter { it.isDebit }) {
+                val description = txn.description.ifBlank { "(no description)" }
+                // The investment test runs first: a SIP debit is not an expense at all, so
+                // asking "which expense category?" about it is already the wrong question.
+                val asset = InvestmentRules.match("$description ${txn.rawLine}")
+                if (asset != null) {
+                    invested += InvestmentItem(
+                        date = txn.date,
+                        description = description,
+                        amount = txn.amount,
+                        type = asset.type,
+                        matchedOn = asset.matchedOn,
+                        source = fileName,
+                    )
+                    continue
+                }
                 val hit = categorizer.classify(txn)
-                SpendItem(
+                spend += SpendItem(
                     date = txn.date,
-                    merchant = txn.description.ifBlank { "(no description)" },
+                    merchant = description,
                     amount = txn.amount,
                     category = hit.category,
                     matchedOn = hit.matchedOn,
@@ -224,22 +269,34 @@ class SpendRoutes(
                     source = fileName,
                 )
             }
+            return Extracted(spend, invested)
         }
 
         val invoice = InvoiceParser.parse(text, fileName)
-        val amount = invoice.totalGrand ?: invoice.taxable ?: return emptyList()
-        val date = invoice.date ?: return emptyList()
+        val amount = invoice.totalGrand ?: invoice.taxable ?: return Extracted()
+        val date = invoice.date ?: return Extracted()
         val merchant = invoice.partyName ?: fileName.substringBeforeLast('.')
+
+        InvestmentRules.match("$merchant ${text.take(400)}")?.let { asset ->
+            return Extracted(
+                investments = listOf(
+                    InvestmentItem(date, merchant, amount, asset.type, asset.matchedOn, fileName),
+                ),
+            )
+        }
+
         val hit = categorizer.classify(merchant, text.take(400))
-        return listOf(
-            SpendItem(
-                date = date,
-                merchant = merchant,
-                amount = amount,
-                category = hit.category,
-                matchedOn = hit.matchedOn,
-                confident = hit.confident && invoice.partyName != null,
-                source = fileName,
+        return Extracted(
+            spend = listOf(
+                SpendItem(
+                    date = date,
+                    merchant = merchant,
+                    amount = amount,
+                    category = hit.category,
+                    matchedOn = hit.matchedOn,
+                    confident = hit.confident && invoice.partyName != null,
+                    source = fileName,
+                ),
             ),
         )
     }
@@ -247,6 +304,61 @@ class SpendRoutes(
     private fun looksLikeCard(text: String): Boolean {
         val lower = text.lowercase()
         return CARD_MARKERS.count { it in lower } >= 2
+    }
+
+    private fun investmentPayload(summary: InvestmentSummary) = mapOf(
+        "investedTotal" to summary.total.toPlainString(),
+        "investedCount" to summary.items.size,
+        "investments" to summary.items.map {
+            mapOf(
+                "date" to it.date.toString(),
+                "description" to it.description,
+                "amount" to it.amount.toPlainString(),
+                "type" to it.type.name,
+                "typeLabel" to it.type.label,
+                "matchedOn" to it.matchedOn,
+                "source" to it.source,
+            )
+        },
+        "investedByType" to summary.byType.map {
+            mapOf(
+                "key" to it.type.name,
+                "label" to it.type.label,
+                "total" to it.total.toPlainString(),
+                "count" to it.count,
+            )
+        },
+    )
+
+    // ── the accountant's workbook ────────────────────────────────────────────────
+
+    /**
+     * Builds the CA pack and hands it straight back as a download.
+     *
+     * Nothing is stored: the workbook is generated per request from whatever the session
+     * currently holds, so there is no stale copy to hand over by mistake.
+     */
+    private fun export(ctx: Context, session: Session, gst: ProcessResult?) {
+        val spend = session.summary
+        val investments = session.investments ?: InvestmentSummary.from(emptyList())
+        if (spend == null && gst == null) {
+            throw IllegalStateException(
+                "Nothing to export yet. Analyse some statements here, or process invoices on " +
+                    "the GST screen first — both end up in the same workbook.",
+            )
+        }
+
+        val input = CaExport.Input(
+            spend = spend ?: SpendSummary.from(emptyList()),
+            investments = investments,
+            loans = loans.all(),
+            salesRows = gst?.salesRows.orEmpty(),
+            purchaseRows = gst?.purchaseRows.orEmpty(),
+        )
+        val bytes = CaExport.build(input)
+        ctx.contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            .header("Content-Disposition", "attachment; filename=\"${CaExport.fileName(input)}\"")
+            .result(bytes)
     }
 
     private fun summaryPayload(summary: SpendSummary) = mapOf(
@@ -388,13 +500,15 @@ class SpendRoutes(
 
     private fun cashFlow(session: Session): Map<String, Any> {
         val summary = session.summary ?: SpendSummary.from(emptyList())
-        val rows = LoanBook(loans.all()).cashFlow(summary)
+        val invested = session.investments ?: InvestmentSummary.from(emptyList())
+        val rows = LoanBook(loans.all()).cashFlow(summary, invested)
         return mapOf(
             "months" to rows.map {
                 mapOf(
                     "month" to it.month.toString(),
                     "label" to monthLabel(it.month),
                     "spending" to it.spending.toPlainString(),
+                    "invested" to it.invested.toPlainString(),
                     "loansDisbursed" to it.loansDisbursed.toPlainString(),
                     "loansBorrowed" to it.loansBorrowed.toPlainString(),
                     "repaymentsReceived" to it.repaymentsReceived.toPlainString(),

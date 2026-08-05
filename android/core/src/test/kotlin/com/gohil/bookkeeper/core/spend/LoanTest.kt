@@ -128,7 +128,7 @@ class LoanTest {
                 )),
             ),
         )
-        val flow = book.cashFlow(spend, LocalDate.of(2026, 3, 1))
+        val flow = book.cashFlow(spend, asOf = LocalDate.of(2026, 3, 1))
 
         val january = flow.first { it.month == YearMonth.of(2026, 1) }
         assertEquals("2000.00", january.spending.toPlainString())

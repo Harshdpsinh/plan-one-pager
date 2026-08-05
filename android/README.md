@@ -173,6 +173,53 @@ in Notepad long after this app is gone.
 row shows which keyword decided it, so a wrong guess is fixed by editing a list rather than
 retraining anything, and it needs no network.
 
+**Investments are separated from expenses**, on the same argument as loans: a ₹10,000 SIP is
+not money consumed, it is money that changed shape. SIPs, deposits, LIC/insurance premiums,
+PPF/NPS and broking transfers are detected by `core/.../spend/Investments.kt` and get their own
+table, their own column in cash flow, and their own sheet in the CA pack — never the spending
+chart. Only debits are ever classified, which matters here: commission *received* from an AMC
+or an insurer is income and belongs in the sales register, not in this list.
+
+---
+
+## The Excel pack for your CA
+
+**Download Excel for CA** on `/spend` produces one workbook, eight sheets:
+
+| Sheet | What is in it |
+| --- | --- |
+| Summary | The period, and each kind of money separately, with a note on each line |
+| Expenses | Every outflow off the statements, with category, the keyword that chose it, and the source file. Rows needing a decision are sorted to the bottom and flagged |
+| Expense by category | The same totals as the pie chart |
+| Investments | SIPs, deposits, premiums, PPF/NPS — explicitly *not* expenses |
+| Sales (GST) | Commission/service invoices with taxable, CGST, SGST, IGST, total, and RCM vs Direct |
+| Purchases (GST) | Purchase invoices with the same GST breakdown |
+| Loans | Given and received, with what is actually outstanding today |
+| Cash flow | Money out and in per month, investing and lending included as outflows |
+
+The two GST sheets fill in from whatever was processed on the **GST bookkeeping screen** in the
+same browser session, so do that first if you want them. Every sheet is a flat table — no merged
+cells, no formulas — so the CA can sort, filter and paste it into their own software.
+
+The file is written by `core/.../xlsx/XlsxWriter.kt`, validated before it is handed over, and
+checked in CI by `verify_fixtures.py` reopening it with openpyxl. **A blank GST cell stays
+blank** rather than becoming a zero: a zero in a GST column is a wrong number in a filing.
+
+### How to use it
+
+1. On `/spend`, drop in the month's bank statements and card bills, unlock any that ask, and
+   press **Analyse spending**.
+2. If you want the GST sheets, open the **GST bookkeeping screen** in the same browser and
+   process that month's purchase and sale invoices there first.
+3. Record any personal loans given or received, and their repayments.
+4. Press **Download Excel for CA**. The file is named for the period it covers —
+   `CA-Pack-Jun-2026.xlsx` — so it explains itself in an inbox.
+5. Open it and read the **Expenses** sheet from the bottom: the flagged rows are the ones the
+   app would not guess at. Fix a wrong category by editing the keyword list, not the sheet, so
+   next month is right too.
+6. Email it to the CA. It is a *report*, not a filing, and not a substitute for the registers —
+   those are still updated by the GST screen's download.
+
 **OCR is optional here.** Text-based PDFs — nearly all bank statements and vendor invoices —
 work with no extra setup. Scans and photos need [Tesseract](https://github.com/tesseract-ocr/tesseract)
 installed and on your PATH; without it those files go to the review list saying so, and the

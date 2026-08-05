@@ -42,10 +42,7 @@ object BankParser {
             if (line.length < MIN_LINE) continue
 
             val date = Patterns.findDate(line) ?: continue
-            val amounts = Patterns.MONEY_TOKEN.findAll(line)
-                .mapNotNull { Patterns.money(it.groupValues[1]) }
-                .filter { it > BigDecimal.ZERO }
-                .toList()
+            val amounts = amountsOn(line)
             if (amounts.isEmpty()) continue
 
             // Header and summary lines contain a date and figures but are not transactions.
@@ -76,6 +73,40 @@ object BankParser {
 
         return Result(txns, unparsed)
     }
+
+    /**
+     * The figures on a line that could actually be money.
+     *
+     * Two things on a statement line look exactly like amounts and are not:
+     *
+     *  - **The date.** `05/06/2026` contributes `2026`, and on a line with no running balance
+     *    that made the year the transaction amount. Every June 2026 row would have been
+     *    ₹2,026.00.
+     *  - **Reference numbers.** `UPI/SWIGGY LTD/8812` contributes `8812`. With the year also
+     *    in play the line had three "amounts", so the last-column-is-the-balance rule picked
+     *    the reference as the transaction and the real amount as the balance.
+     *
+     * Both are removed by shape rather than by size: a number glued to a slash is never a
+     * money column, because money columns are whitespace-separated. Guessing by magnitude
+     * ("2026 looks like a year") would misread a genuine ₹2,026 payment.
+     */
+    private fun amountsOn(line: String): List<BigDecimal> {
+        val withoutDates = DATE_TOKENS.fold(line) { acc, pattern -> pattern.replace(acc, " ") }
+        return Patterns.MONEY_TOKEN.findAll(withoutDates)
+            .filter { match ->
+                val before = withoutDates.getOrNull(match.range.first - 1)
+                before != '/' && before != '\\'
+            }
+            .mapNotNull { Patterns.money(it.groupValues[1]) }
+            .filter { it > BigDecimal.ZERO }
+            .toList()
+    }
+
+    private val DATE_TOKENS = listOf(
+        Regex("""\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b"""),
+        Regex("""\b\d{4}-\d{2}-\d{2}\b"""),
+        Regex("""\b\d{1,2}[\-\s](?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\-\s]\d{2,4}\b""", RegexOption.IGNORE_CASE),
+    )
 
     private data class Resolved(val amount: BigDecimal, val isDebit: Boolean, val balance: BigDecimal?)
 

@@ -17,6 +17,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import com.gohil.bookkeeper.core.xlsx.XlsxAppender
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
@@ -71,6 +72,7 @@ class SpendEndToEndTest {
                 "07/06/2026 POS IRCTC WEB BOOKING 3,410.50 DR",
                 "11/06/2026 AMAZON WEB SERVICES INDIA 8,900.00 DR",
                 "14/06/2026 NEFT DR AIRTEL BROADBAND 1,199.00 DR",
+                "18/06/2026 ACH D- SIP INSTALMENT PARAG PARIKH 10,000.00 DR",
                 "21/06/2026 NEFT CR SALARY CREDIT 85,000.00 CR",
             )
             cs.beginText()
@@ -136,6 +138,17 @@ class SpendEndToEndTest {
 
     private fun hashOf(json: String): String =
         Regex(""""fileHash"\s*:\s*"([0-9a-f]{64})"""").find(json)!!.groupValues[1]
+
+    /** Every worksheet part concatenated, for asserting a value landed somewhere in the book. */
+    private fun worksheetText(bytes: ByteArray): String = buildString {
+        java.util.zip.ZipInputStream(bytes.inputStream()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (entry.name.startsWith("xl/worksheets/")) append(zip.readBytes().decodeToString())
+                entry = zip.nextEntry
+            }
+        }
+    }
 
     // ── tests ────────────────────────────────────────────────────────────────────
 
@@ -227,6 +240,76 @@ class SpendEndToEndTest {
         ).body()
         assertFalse(unlocked.contains("topsecret"), "the password must not come back down the wire")
         assertFalse(get("/api/spend/passwords").body().contains("topsecret"))
+    }
+
+    @Test
+    fun `a SIP is separated from spending rather than charted as an expense`() {
+        upload(Multipart().file("files", "hdfc-june.pdf", statementPdf()))
+        val body = form("/api/spend/analyse", emptyMap()).body()
+
+        assertContains(body, "\"investedTotal\":\"10000.00\"")
+        assertContains(body, "MUTUAL_FUND")
+        // The four real expenses only: 1,240 + 3,410.50 + 8,900 + 1,199.
+        assertContains(body, "\"total\":\"14749.50\"")
+        assertFalse(
+            body.substringBefore("\"investments\"").contains("PARAG PARIKH"),
+            "the SIP must not appear among the categorised expenses",
+        )
+
+        assertContains(get("/api/spend/cashflow").body(), "\"invested\":\"10000.00\"")
+    }
+
+    @Test
+    fun `downloads a CA workbook that a spreadsheet reader can open`() {
+        upload(Multipart().file("files", "hdfc-june.pdf", statementPdf()))
+        form("/api/spend/analyse", emptyMap())
+        form(
+            "/api/spend/loans",
+            mapOf(
+                "counterparty" to "Ramesh Patel", "direction" to "GIVEN", "principal" to "50000",
+                "annualRatePct" to "0", "startDate" to "2026-01-10", "termMonths" to "10",
+            ),
+        )
+
+        val res = client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/api/spend/export")).GET().build(),
+            HttpResponse.BodyHandlers.ofByteArray(),
+        )
+        assertEquals(200, res.statusCode())
+        assertContains(
+            res.headers().firstValue("Content-Disposition").orElse(""),
+            "CA-Pack-Jun-2026.xlsx",
+            message = "the filename should name the period so it explains itself in an inbox",
+        )
+
+        // Reopening it with the appender is the real check: if the package were malformed,
+        // this is where it would fail rather than in Excel on the accountant's machine.
+        assertEquals(
+            listOf(
+                "Summary", "Expenses", "Expense by category", "Investments",
+                "Sales (GST)", "Purchases (GST)", "Loans", "Cash flow",
+            ),
+            XlsxAppender.open(res.body()).sheetNames(),
+        )
+
+        val text = worksheetText(res.body())
+        assertContains(text, "SWIGGY")
+        assertContains(text, "PARAG PARIKH")
+        assertContains(text, "Ramesh Patel")
+
+        // Written to disk so verify_fixtures.py can reopen it with openpyxl.
+        java.io.File("build/web-fixtures").apply { mkdirs() }
+            .resolve("web_ca_pack.xlsx").writeBytes(res.body())
+    }
+
+    @Test
+    fun `exporting with nothing loaded explains what to do instead of failing silently`() {
+        val res = client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/api/spend/export")).GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+        assertEquals(400, res.statusCode())
+        assertContains(res.body(), "Analyse some statements")
     }
 
     @Test
