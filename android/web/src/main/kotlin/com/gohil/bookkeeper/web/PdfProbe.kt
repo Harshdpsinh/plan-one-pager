@@ -73,12 +73,15 @@ object PdfProbe {
             Attempt.WrongPassword -> Unit
         }
 
-        // Encrypted. The remembered password for *this* file is the only one worth trying:
-        // trying the others would be the blanket behaviour this exists to remove.
+        // Encrypted. This file's own remembered password is tried first — it is the one that
+        // is known to work, and trying it alone is the whole point of hashing the contents.
         val remembered = store?.get(hash)
         if (remembered != null) {
             when (val open = tryOpen(bytes, remembered)) {
-                is Attempt.Ok -> return Probe(fileName, hash, State.UNLOCKED_FROM_STORE, remembered)
+                is Attempt.Ok -> return Probe(
+                    fileName, hash, State.UNLOCKED_FROM_STORE, remembered,
+                    detail = OPENED_FROM_STORE,
+                )
                 is Attempt.Broken -> return Probe(fileName, hash, State.UNREADABLE, detail = open.detail)
                 // A stored password that stopped working means the file changed under the same
                 // hash — impossible — or the store is stale. Drop it and ask again rather than
@@ -86,6 +89,34 @@ object PdfProbe {
                 Attempt.WrongPassword -> store.forget(hash)
             }
         }
+
+        // A file never seen before, which is what every new month's download is: the bank
+        // names it statement.pdf again and re-encrypts it, so the hash is new even though
+        // the password is not. Try what has already been proven to work on this machine
+        // before making the user type anything.
+        //
+        // This is not the blanket behaviour the per-file model replaced. That one tried
+        // whatever the user had typed into the box this session against every encrypted
+        // file, got slower and vaguer with each account added, and could never say which
+        // password was missing. This tries only passwords already proven against some file,
+        // only after the file's own entry has been tried, and it still ends at
+        // NEEDS_PASSWORD naming the one file nothing opened.
+        for (candidate in store?.known().orEmpty()) {
+            if (candidate == remembered) continue
+            when (val open = tryOpen(bytes, candidate)) {
+                is Attempt.Ok -> {
+                    // Record it against this file too, so next time the direct hit answers.
+                    store?.put(hash, candidate)
+                    return Probe(
+                        fileName, hash, State.UNLOCKED_FROM_STORE, candidate,
+                        detail = OPENED_FROM_STORE,
+                    )
+                }
+                is Attempt.Broken -> return Probe(fileName, hash, State.UNREADABLE, detail = open.detail)
+                Attempt.WrongPassword -> Unit
+            }
+        }
+
         return Probe(fileName, hash, State.NEEDS_PASSWORD)
     }
 
@@ -98,6 +129,8 @@ object PdfProbe {
         if (ok && remember) store?.put(hash(bytes), password)
         return ok
     }
+
+    const val OPENED_FROM_STORE = "Opened with a password you saved earlier."
 
     private sealed interface Attempt {
         data object Ok : Attempt

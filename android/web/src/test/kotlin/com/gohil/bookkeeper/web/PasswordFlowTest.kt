@@ -186,4 +186,43 @@ class PasswordFlowTest {
         val reopened = PasswordStore(dir.resolve("passwords.enc"), dir.resolve("passwords.key"))
         assertEquals(awkward, reopened.get(PdfProbe.hash(bytes)))
     }
+
+    @Test
+    fun `next month's statement opens itself with a password proven on last month's`() {
+        // Why the per-file store alone was not enough: a bank names every export
+        // statement.pdf and re-encrypts it, so July is a different hash from June even
+        // though the password never changed. Being asked again every month is precisely
+        // what "never ask me twice" was supposed to prevent.
+        val june = pdf("June statement", password = "97894070894")
+        assertTrue(PdfProbe.verify(june, "97894070894", store, remember = true))
+
+        val july = pdf("July statement", password = "97894070894")
+        val probe = PdfProbe.probe(july, "statement.pdf", store)
+
+        assertEquals(PdfProbe.State.UNLOCKED_FROM_STORE, probe.state)
+        assertFalse(probe.needsPassword)
+        // And it is now known by its own hash, so next time the direct look-up answers.
+        assertEquals("97894070894", store.get(PdfProbe.hash(july)))
+    }
+
+    @Test
+    fun `a file none of the saved passwords opens still asks, and names itself`() {
+        PdfProbe.verify(pdf("known", password = "97894070894"), "97894070894", store, remember = true)
+
+        val stranger = pdf("some other bank", password = "totally-different")
+        val probe = PdfProbe.probe(stranger, "hdfc-july.pdf", store)
+
+        assertEquals(PdfProbe.State.NEEDS_PASSWORD, probe.state)
+        assertEquals("hdfc-july.pdf", probe.fileName)
+        assertNull(probe.password)
+    }
+
+    @Test
+    fun `an unprotected statement is not affected by the saved passwords`() {
+        // Trying saved passwords must not change the answer for a file that needs none —
+        // that would put a prompt in front of the majority of documents.
+        PdfProbe.verify(pdf("known", password = "97894070894"), "97894070894", store, remember = true)
+
+        assertEquals(PdfProbe.State.OPEN, PdfProbe.probe(pdf("open invoice"), "invoice.pdf", store).state)
+    }
 }

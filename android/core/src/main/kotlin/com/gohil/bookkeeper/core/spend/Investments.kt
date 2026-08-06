@@ -53,6 +53,10 @@ object InvestmentRules {
             "nippon india mf", "hdfc amc", "icici prudential mf", "sbi mutual", "axis mutual",
             "uti mutual", "mirae asset", "parag parikh", "quant mutual", "elss", "cams",
             "kfintech", "karvy mf", "folio",
+            // Every SIP on the ICICI account settles through the BSE StAR MF clearing house,
+            // so the fund's name never appears on the statement — only this. Without it the
+            // month's SIPs were charted as ordinary spending.
+            "indian clearing corp", "indian clearin",
         ),
         InstrumentType.EQUITY to listOf(
             "zerodha", "upstox", "angel one", "angel broking", "5paisa", "icici direct",

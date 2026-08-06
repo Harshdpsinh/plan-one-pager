@@ -79,6 +79,27 @@ class PasswordStore(
         return cache.size
     }
 
+    /**
+     * Every password remembered so far, for trying against a file never seen before.
+     *
+     * This is what makes "never type it again" true across months rather than only across
+     * restarts. A bank names every export statement.pdf and re-encrypts each one, so next
+     * month's file is a new hash and the per-file entry cannot help it — but it is almost
+     * always opened by a password already in here.
+     *
+     * Deliberately not keyed by bank. The obvious alternative was a table of bank to
+     * password, and the first attempt at writing one down had ICICI's password against SBI
+     * and a password for ICICI that ICICI does not use, because its statement is not
+     * encrypted at all. A wrong entry in that table produces a confident failure; trying the
+     * whole set produces the right answer without anyone having to be right about which bank
+     * uses what.
+     */
+    @Synchronized
+    fun known(): List<String> {
+        load()
+        return cache.values.distinct()
+    }
+
     // ── storage ──────────────────────────────────────────────────────────────────
 
     private fun load() {

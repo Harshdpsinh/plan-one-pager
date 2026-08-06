@@ -89,7 +89,11 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
     companion object {
         /**
          * Starting rules, weighted to Indian merchants because that is what the statements
-         * contain. Meant to be edited: the first month of real data will show gaps.
+         * contain.
+         *
+         * The first month of real data did show gaps, as expected, and the merchants it
+         * named have been folded in — they are marked below. Everything unmarked was written
+         * before any statement had been read and is still a guess.
          */
         fun defaults(): List<SpendRule> = listOf(
             SpendRule(
@@ -100,6 +104,8 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "slack", "zoom", "notion", "figma", "dropbox", "canva", "openai", "anthropic",
                     "godaddy", "hostinger", "digitalocean", "vercel", "netlify", "jetbrains",
                     "tally solutions", "zoho", "freshworks", "subscription",
+                    // from July's statements
+                    "amazon prime", "prime recu",
                 ),
                 priority = 2,
             ),
@@ -110,6 +116,8 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "goibibo", "cleartrip", "yatra", "ixigo", "uber", "ola", "rapido", "redbus",
                     "petrol", "fuel", "hpcl", "bpcl", "indian oil", "iocl", "toll", "fastag",
                     "parking", "railway", "airlines", "airport", "oyo", "taxi",
+                    // from July's statements
+                    "petroleum", "transport", "travels", "fuel sur",
                 ),
                 priority = 2,
             ),
@@ -119,6 +127,8 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "swiggy", "zomato", "dominos", "pizza hut", "mcdonald", "kfc", "burger king",
                     "starbucks", "cafe coffee day", "ccd", "barista", "chaayos", "restaurant",
                     "cafe", "bakery", "eatery", "dhaba", "catering", "food", "dineout", "eazydiner",
+                    // from July's statements
+                    "pizza", "taco bell", "biriyani", "restaur",
                 ),
                 priority = 2,
             ),
@@ -128,6 +138,9 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "stationery", "staples", "office depot", "printer", "cartridge", "toner",
                     "xerox", "printing", "courier", "dtdc", "bluedart", "blue dart", "delhivery",
                     "fedex", "dhl", "india post", "speed post", "paper", "furniture",
+                    // "SHARMA OFFICE SUPPLIES PVT LTD" was uncategorised: the rule had
+                    // "stationery" and "office depot" but not the plainest phrase of all.
+                    "office supplies", "office supply",
                 ),
                 priority = 2,
             ),
@@ -137,6 +150,9 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "airtel", "jio", "vodafone", "vi ", "bsnl", "act fibernet", "hathway",
                     "broadband", "electricity", "torrent power", "adani electricity", "mseb",
                     "gujarat gas", "water bill", "internet", "telephone", "mobile recharge",
+                    // from July's statements — SBI's card routes utility bills through
+                    // Bharat Connect, so the biller's own name never appears.
+                    "bharat connect", "mobpostpaid", "postpaid",
                 ),
                 priority = 2,
             ),
@@ -168,6 +184,9 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "pharmacy", "chemist", "myntra", "ajio", "nykaa", "netflix", "spotify",
                     "hotstar", "prime video", "sony liv", "zee5", "bookmyshow", "pvr", "inox",
                     "school fee", "tuition", "hospital", "clinic",
+                    // from July's statements. ASSPL is how Amazon Seller Services settles,
+                    // and it is the merchant string the card actually prints.
+                    "asspl", "zudio", "trent", "metro brands", "snitch", "westside",
                 ),
                 priority = 2,
             ),
