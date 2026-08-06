@@ -106,8 +106,14 @@
       <h2>2 · Statement passwords</h2>
       <label for="passwords">One per line — every protected PDF is tried against all of them</label>
       <textarea id="passwords" name="passwords" placeholder="hdfc-password&#10;axis-card-password&#10;icici-password"></textarea>
-      <p class="hint">Held in memory for this run only. Never written to disk, never logged,
-        never sent anywhere — the server makes no outbound connections.</p>
+      <p class="hint">Never logged, never sent anywhere — the server makes no outbound
+        connections. A password that <em>successfully opens a file</em> is saved, encrypted,
+        in <code>.gohil-bookkeeper</code> in your home folder, so you are not asked for it
+        again next month. Anyone who can log in as you on this computer could decrypt it.
+        <a href="/spend" style="color:var(--accent)">Manage or erase saved passwords →</a></p>
+      <p class="hint">Prefer being asked each time? The
+        <a href="/spend" style="color:var(--accent)">Spend analysis screen</a> checks each file
+        on its own and lets you untick <strong>Remember it</strong> per file.</p>
     </div>
 
     <div class="card">
