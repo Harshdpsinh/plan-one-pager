@@ -464,9 +464,18 @@ function renderDashboard(d) {
   $('reviewCount').textContent = d.needsReview;
   drawInvestments(d.investments || []);
 
-  $('skipped').innerHTML = (d.skipped || []).length === 0 ? '' :
-    '<div class="note warn">' + d.skipped.map(s =>
-      `<div><strong>${esc(s.file)}</strong> — ${esc(s.why)}</div>`).join('') + '</div>';
+  // Skipped files and overlapping payments share one strip: both are "something is not in
+  // the numbers below, or is in them twice", which is the one thing you must see before
+  // trusting the total.
+  const skipped = (d.skipped || []).map(s =>
+    `<div><strong>${esc(s.file)}</strong> — ${esc(s.why)}</div>`);
+  const overlaps = (d.overlaps || []).map(o =>
+    `<div><strong>${esc(o.what)}</strong> ${money(o.amount)} on ${esc(o.date)} appears in ` +
+    `${o.files.map(esc).join(' and ')}. Counted once per statement — remove one if it is the ` +
+    `same payment.</div>`);
+  const notes = skipped.concat(overlaps);
+  $('skipped').innerHTML = notes.length === 0 ? '' :
+    '<div class="note warn">' + notes.join('') + '</div>';
 
   drawDonut(d.byCategory, Number(d.total));
   drawBars(d.byMonth);

@@ -5,6 +5,7 @@ import com.gohil.bookkeeper.core.model.StatementSource
 import com.gohil.bookkeeper.core.parse.BankParser
 import com.gohil.bookkeeper.core.parse.InvoiceParser
 import com.gohil.bookkeeper.core.spend.CaExport
+import com.gohil.bookkeeper.core.spend.Duplicates
 import com.gohil.bookkeeper.core.spend.InvestmentItem
 import com.gohil.bookkeeper.core.spend.InvestmentRules
 import com.gohil.bookkeeper.core.spend.InvestmentSummary
@@ -186,6 +187,7 @@ class SpendRoutes(
         val items = mutableListOf<SpendItem>()
         val invested = mutableListOf<InvestmentItem>()
         val skipped = mutableListOf<Map<String, String>>()
+        val accepted = mutableListOf<Duplicates.Fingerprint>()
 
         for ((_, staged) in session.files) {
             if (staged.state == PdfProbe.State.NEEDS_PASSWORD) {
@@ -200,14 +202,27 @@ class SpendRoutes(
             when (val extracted = extractor.extract(staged.bytes, staged.fileName, passwords)) {
                 is JvmExtractor.Result.Text -> {
                     val found = itemsFrom(extracted.text, staged.fileName)
-                    if (found.spend.isEmpty() && found.investments.isEmpty()) {
-                        skipped += mapOf(
+                    val fingerprint = Duplicates.Fingerprint(staged.fileName, found.keys)
+                    val alreadyHave = Duplicates.duplicateOf(fingerprint, accepted)
+                    when {
+                        alreadyHave != null -> skipped += mapOf(
                             "file" to staged.fileName,
-                            "why" to "Opened, but no dated amounts were found in it.",
+                            "why" to "The same statement as ${alreadyHave.fileName} — " +
+                                "left out so this month is not counted twice.",
                         )
+                        found.spend.isEmpty() && found.investments.isEmpty() -> {
+                            skipped += mapOf(
+                                "file" to staged.fileName,
+                                "why" to "Opened, but no dated amounts were found in it.",
+                            )
+                            if (found.keys.isNotEmpty()) accepted += fingerprint
+                        }
+                        else -> {
+                            items += found.spend
+                            invested += found.investments
+                            accepted += fingerprint
+                        }
                     }
-                    items += found.spend
-                    invested += found.investments
                 }
                 is JvmExtractor.Result.PasswordProblem -> {
                     staged.state = PdfProbe.State.NEEDS_PASSWORD
@@ -224,7 +239,35 @@ class SpendRoutes(
         session.investments = investmentSummary
         ctx.json(
             summaryPayload(summary) + investmentPayload(investmentSummary) +
-                mapOf("skipped" to skipped),
+                mapOf(
+                    "skipped" to skipped,
+                    "overlaps" to overlapPayload(Duplicates.overlaps(accepted), items, invested),
+                ),
+        )
+    }
+
+    /**
+     * Payments that appeared in two statements neither of which is a copy of the other.
+     *
+     * Shown rather than removed. Two accounts really can both pay ₹500 on the same day, and
+     * nothing in the data distinguishes that from one payment listed twice — so this asks
+     * instead of deciding. The amount is repeated back so the user can see what is at stake
+     * without opening the statements.
+     */
+    private fun overlapPayload(
+        overlaps: List<Duplicates.Overlap>,
+        spend: List<SpendItem>,
+        invested: List<InvestmentItem>,
+    ): List<Map<String, Any>> = overlaps.mapNotNull { overlap ->
+        val (date, amount) = overlap.key.split('|').let { it[0] to it[1] }
+        val what = spend.firstOrNull { it.date.toString() == date && it.amount.stripTrailingZeros().toPlainString() == amount }?.merchant
+            ?: invested.firstOrNull { it.date.toString() == date && it.amount.stripTrailingZeros().toPlainString() == amount }?.description
+            ?: return@mapNotNull null
+        mapOf(
+            "date" to date,
+            "amount" to amount,
+            "what" to what,
+            "files" to overlap.files,
         )
     }
 
@@ -232,6 +275,12 @@ class SpendRoutes(
     data class Extracted(
         val spend: List<SpendItem> = emptyList(),
         val investments: List<InvestmentItem> = emptyList(),
+        /**
+         * Every transaction the file described, including credits and transfers, as
+         * [Duplicates] keys. Taken before anything is filtered out so that a statement made
+         * entirely of transfers is still recognisable when it arrives a second time.
+         */
+        val keys: List<String> = emptyList(),
     )
 
     /**
@@ -280,7 +329,7 @@ class SpendRoutes(
                     source = fileName,
                 )
             }
-            return Extracted(spend, invested)
+            return Extracted(spend, invested, statement.transactions.map(Duplicates::key))
         }
 
         val invoice = InvoiceParser.parse(text, fileName)
@@ -312,9 +361,25 @@ class SpendRoutes(
         )
     }
 
-    private fun looksLikeCard(text: String): Boolean {
+    /**
+     * Which kind of statement this is, weighed rather than counted.
+     *
+     * This decides how a row with no Dr/Cr marker is read, so getting it wrong does not
+     * degrade the answer — it inverts it. The previous rule looked for two card words
+     * anywhere in the document, and every bank prints the sentence "never share your
+     * Debit/Credit Card number with anyone" at the foot of the page. That is two card words.
+     * On the July SBI statement it turned 53 commission receipts into 53 expenses and put
+     * ₹1,14,898 of income into the spending chart.
+     *
+     * A card statement and a bank statement both mention cards and both mention balances, so
+     * neither vocabulary is decisive on its own. What separates them is which vocabulary
+     * dominates: a card is the document that talks about limits and amounts due, a bank
+     * account is the document that talks about IFSC codes and withdrawals. Across nine real
+     * statements the winning side is never close — the smallest margin is 2 to 0.
+     */
+    internal fun looksLikeCard(text: String): Boolean {
         val lower = text.lowercase()
-        return CARD_MARKERS.count { it in lower } >= 2
+        return CARD_MARKERS.count { it in lower } > BANK_MARKERS.count { it in lower }
     }
 
     private fun investmentPayload(summary: InvestmentSummary) = mapOf(
@@ -533,9 +598,28 @@ class SpendRoutes(
     }
 
     companion object {
+        /**
+         * Words a credit-card statement uses about itself.
+         *
+         * "credit card", "card number" and "statement period" are gone: all three appear in
+         * the fraud warning at the foot of an ordinary bank statement, which is what made
+         * the old rule call SBI's current account a credit card.
+         */
         private val CARD_MARKERS = listOf(
-            "credit card", "card statement", "total amount due", "minimum amount due",
-            "statement period", "available credit limit", "reward points", "card number",
+            "total amount due", "total payment due", "minimum amount due", "minimum payment due",
+            "payment due date", "available credit limit", "credit limit", "cash limit",
+            "reward points", "rupay", "card statement", "cardholder", "billing period",
+            "statement date", "pay your bill",
+        )
+
+        /**
+         * Words only an account statement uses. CSB's card carries almost no text at all and
+         * wins on two card words against none of these, which is the narrowest real case.
+         */
+        private val BANK_MARKERS = listOf(
+            "statement of account", "statement of transactions", "account number", "account no",
+            "ifsc", "micr", "branch code", "branch name", "closing balance", "opening balance",
+            "withdrawal", "deposit", "cheque number", "value date", "narration",
         )
         private val MONTH_FORMAT = DateTimeFormatter.ofPattern("MMM yyyy")
 
