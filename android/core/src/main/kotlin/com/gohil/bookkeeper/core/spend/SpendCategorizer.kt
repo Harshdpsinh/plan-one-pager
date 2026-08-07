@@ -4,6 +4,11 @@ import com.gohil.bookkeeper.core.model.BankTxn
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.YearMonth
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Spend categories for the analysis dashboard.
@@ -21,6 +26,19 @@ enum class SpendCategory(val label: String, val paletteSlot: Int) {
     PROFESSIONAL("Professional Fees", 6),
     BANK_CHARGES("Bank Charges", 7),
     PERSONAL("Personal", 8),
+
+    /**
+     * Money that moved without being spent: a credit-card bill paid from the bank account,
+     * a transfer between own accounts, cash taken out.
+     *
+     * Not a spending category, and never charted as one. A card bill is the single largest
+     * outflow on a bank statement and it is not an expense — the expenses are the card's own
+     * rows, which arrive from the card statement. Counting both charged this household
+     * ₹1,44,500 it never spent. Shares the neutral palette slot because it never reaches a
+     * chart.
+     */
+    TRANSFER("Transfers & withdrawals", 0),
+
     UNCATEGORISED("Uncategorised", 0),
 }
 
@@ -36,6 +54,13 @@ data class SpendRule(
     val patterns: List<Regex> = emptyList(),
     /** Higher wins when several rules match. */
     val priority: Int = 0,
+    /**
+     * True for a rule the user wrote themselves.
+     *
+     * It outranks the built-in guesses, and a merchant it names is never flagged as
+     * contested — the user has already answered the question the flag would be asking.
+     */
+    val user: Boolean = false,
 ) {
     fun matches(text: String): String? {
         val lower = text.lowercase()
@@ -80,13 +105,51 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
         )
         // Two rules of different categories both firing means the merchant is genuinely
         // ambiguous; the category is still assigned but flagged so the UI can mark it.
+        // Unless the winner is a rule the user wrote: they have already settled it, and
+        // asking again every month is the opposite of what writing it down was for.
         val contested = hits.map { it.first.category }.distinct().size > 1
-        return Classification(best.first.category, best.second, confident = !contested)
+        return Classification(best.first.category, best.second, confident = !contested || best.first.user)
     }
 
     fun classify(txn: BankTxn): Classification = classify(txn.description, txn.rawLine)
 
     companion object {
+
+        /**
+         * Above every built-in rule, including BANK_CHARGES. A merchant the user has named
+         * is not a guess to be outvoted.
+         */
+        private const val USER_PRIORITY = 10
+
+        /**
+         * Rules from the user's own file, which sits next to the password store and is
+         * edited by hand.
+         *
+         * The format is deliberately the least there is — a category name, then the words
+         * that mean it:
+         *
+         * ```json
+         * { "MEALS": ["taco bell", "biriyani"], "TRAVEL": ["chitra transport"] }
+         * ```
+         *
+         * Anything unparseable is ignored rather than thrown, because the alternative is an
+         * app that will not start because of a stray comma in a list of shop names. An
+         * unknown category name is skipped for the same reason; the rest of the file still
+         * applies.
+         */
+        fun userRules(json: String): List<SpendRule> = runCatching {
+            Json.parseToJsonElement(json).jsonObject.mapNotNull { (name, value) ->
+                val category = SpendCategory.entries
+                    .firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
+                    ?: return@mapNotNull null
+                val keywords = value.jsonArray
+                    .mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.lowercase() }
+                    .filter { it.isNotBlank() }
+                if (keywords.isEmpty()) null
+                else SpendRule(category, keywords, priority = USER_PRIORITY, user = true)
+            }
+        }.getOrDefault(emptyList())
+
         /**
          * Starting rules, weighted to Indian merchants because that is what the statements
          * contain.

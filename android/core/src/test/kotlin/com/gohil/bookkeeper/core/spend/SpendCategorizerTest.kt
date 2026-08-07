@@ -109,12 +109,43 @@ class SpendCategorizerTest {
     }
 
     @Test
-    fun `every category has its own palette slot`() {
-        val slots = SpendCategory.entries.map { it.paletteSlot }
+    fun `every charted category has its own palette slot`() {
+        // Slot 0 is the neutral grey. UNCATEGORISED uses it, and so does TRANSFER, which is
+        // not a kind of spending and never reaches a chart at all — so the two sharing it
+        // cannot put two slices the same colour. Everything that is drawn must be distinct.
+        val charted = SpendCategory.entries.filter { it.paletteSlot != 0 }
+        val slots = charted.map { it.paletteSlot }
         assertEquals(slots.size, slots.distinct().size, "two categories would be drawn the same colour")
-        // Slot 0 is the neutral grey reserved for "we don't know"; the rest are the eight
-        // validated categorical hues, and there must not be a ninth.
-        assertTrue(slots.all { it in 0..8 }, "palette only defines slots 0-8")
+        // The eight validated categorical hues, and there must not be a ninth.
+        assertTrue(slots.all { it in 1..8 }, "palette only defines slots 1-8 for data")
         assertEquals(0, SpendCategory.UNCATEGORISED.paletteSlot)
+        assertEquals(0, SpendCategory.TRANSFER.paletteSlot)
+    }
+
+    @Test
+    fun `a rule the user wrote beats the built-in guess`() {
+        // "amazon pay" reads as SOFTWARE via the "amazon web services" family of guesses.
+        // Once the user has said what it is, that has to be the answer, and it must not come
+        // back flagged as contested — being asked the same question every month is the thing
+        // writing it down was supposed to end.
+        val mine = SpendCategorizer.userRules("""{ "PERSONAL": ["amazon pay"] }""")
+        val categorizer = SpendCategorizer(SpendCategorizer.defaults() + mine)
+
+        val hit = categorizer.classify("AMAZON PAY IN E COMMERC BANGALORE")
+        assertEquals(SpendCategory.PERSONAL, hit.category)
+        assertEquals("amazon pay", hit.matchedOn)
+        assertTrue(hit.confident, "the user already settled this one")
+    }
+
+    @Test
+    fun `a broken rules file is ignored rather than stopping the app`() {
+        // A stray comma in a list of shop names must not be the reason the server will not
+        // start, and an unknown category name must not take the rest of the file with it.
+        assertTrue(SpendCategorizer.userRules("{ not json at all ").isEmpty())
+        assertEquals(
+            listOf(SpendCategory.MEALS),
+            SpendCategorizer.userRules("""{ "NOT_A_CATEGORY": ["x"], "MEALS": ["dosa"] }""")
+                .map { it.category },
+        )
     }
 }

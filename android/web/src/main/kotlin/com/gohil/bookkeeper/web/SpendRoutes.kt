@@ -13,11 +13,15 @@ import com.gohil.bookkeeper.core.spend.LoanBook
 import com.gohil.bookkeeper.core.spend.LoanDirection
 import com.gohil.bookkeeper.core.spend.Repayment
 import com.gohil.bookkeeper.core.spend.SpendCategorizer
+import com.gohil.bookkeeper.core.spend.SpendCategory
 import com.gohil.bookkeeper.core.spend.SpendItem
+import com.gohil.bookkeeper.core.spend.SpendRule
 import com.gohil.bookkeeper.core.spend.SpendSummary
 import io.javalin.Javalin
 import io.javalin.http.Context
 import java.math.BigDecimal
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -35,7 +39,9 @@ class SpendRoutes(
     private val store: PasswordStore?,
     private val loans: LoanRepository,
     private val extractor: JvmExtractor = JvmExtractor(),
-    private val categorizer: SpendCategorizer = SpendCategorizer(),
+    private val categorizer: SpendCategorizer = SpendCategorizer(
+        SpendCategorizer.defaults() + userRules(),
+    ),
 ) {
 
     /**
@@ -259,6 +265,11 @@ class SpendRoutes(
                     continue
                 }
                 val hit = categorizer.classify(txn)
+                // Same argument as the investment test above: a credit-card bill paid from
+                // the bank account is not an expense. Its expenses are the card's own rows,
+                // which arrive from the card statement, and counting the payment as well
+                // charges the month twice.
+                if (hit.category == SpendCategory.TRANSFER) continue
                 spend += SpendItem(
                     date = txn.date,
                     merchant = description,
@@ -529,5 +540,26 @@ class SpendRoutes(
         private val MONTH_FORMAT = DateTimeFormatter.ofPattern("MMM yyyy")
 
         private fun monthLabel(month: YearMonth): String = month.atDay(1).format(MONTH_FORMAT)
+
+        /** Where the user's own category words live. Alongside the password store. */
+        fun rulesFile(): Path = PasswordStore.defaultDir().resolve("spend-categories.json")
+
+        /**
+         * The user's category words, if they have written any.
+         *
+         * The rules were always described as "correctable by editing a list", which was only
+         * true for whoever could rebuild the app. Reading them from a file makes it true for
+         * the person who actually knows what MYNTRA DESIGNS is.
+         *
+         * Read once at startup, not per request: a statement should not be categorised one
+         * way at the top of a run and another way at the bottom because the file changed in
+         * between.
+         */
+        fun userRules(): List<SpendRule> {
+            val file = rulesFile()
+            if (!Files.exists(file)) return emptyList()
+            return runCatching { SpendCategorizer.userRules(Files.readString(file)) }
+                .getOrDefault(emptyList())
+        }
     }
 }
