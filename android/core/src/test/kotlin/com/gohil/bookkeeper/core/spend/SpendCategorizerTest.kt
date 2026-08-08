@@ -117,4 +117,14 @@ class SpendCategorizerTest {
         assertTrue(slots.all { it in 0..8 }, "palette only defines slots 0-8")
         assertEquals(0, SpendCategory.UNCATEGORISED.paletteSlot)
     }
+
+    @Test
+    fun `an Indian office supplier is not left uncategorised`() {
+        // A live run put "SHARMA OFFICE SUPPLIES PVT LTD" in Uncategorised: the list had
+        // "office depot" but not the words a supplier here actually trades under.
+        assertEquals(
+            SpendCategory.OFFICE,
+            categorizer.classify("SHARMA OFFICE SUPPLIES PVT LTD").category,
+        )
+    }
 }

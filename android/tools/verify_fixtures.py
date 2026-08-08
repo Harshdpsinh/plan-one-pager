@@ -142,6 +142,20 @@ def verify_sales(fixtures: Path) -> None:
     check("direct gst type", ws["P5"].value, "Direct".upper())
 
 
+def header_row_of(ws, first_header: str) -> int:
+    """Find the row the table starts on rather than hard-coding it.
+
+    Each sheet carries a variable number of note lines above its header, and a conditional
+    warning line can appear or disappear depending on the data. Pinning the row number meant
+    an added note silently broke every assertion below it.
+    """
+    for row in range(1, min(ws.max_row, 20) + 1):
+        if ws.cell(row, 1).value == first_header:
+            return row
+    failures.append(f"{ws.title}: no header row starting with {first_header!r}")
+    return 1
+
+
 def verify_ca_pack(fixtures: Path) -> None:
     """The workbook that goes to the accountant, read by something other than what wrote it.
 
@@ -163,19 +177,21 @@ def verify_ca_pack(fixtures: Path) -> None:
     )
 
     ws = wb["Expenses"]
-    # Two notes, a blank line, then the header — the layout the sheet builder promises.
-    header_row = 4
+    header_row = header_row_of(ws, "Date")
     check(
         "ca pack: expense headers",
         [c.value for c in ws[header_row]],
         ["Date", "Merchant / narration", "Amount", "Category",
-         "Matched on", "Needs check", "Source file"],
+         "Matched on", "Needs check", "Also in Purchases (GST)", "Source file"],
     )
     check("ca pack: expense rows + total", ws.max_row, header_row + 4)
     # Settled rows come first, newest first; the flagged one is pushed to the end.
     check("ca pack: dates are real dates", ws.cell(header_row + 1, 1).value, datetime(2026, 6, 7))
     check("ca pack: amount is a number", ws.cell(header_row + 2, 3).value, 1240.0)
     check("ca pack: flagged row is last", ws.cell(ws.max_row - 1, 6).value, "Yes - no rule matched")
+    # No purchase row shares a date and amount with an expense row in this fixture.
+    overlap = [ws.cell(r, 7).value for r in range(header_row + 1, ws.max_row)]
+    check("ca pack: no false overlap flag", any(overlap), False)
     check("ca pack: expense total", ws.cell(ws.max_row, 3).value, 5550.5)
 
     # The SIP must be in Investments and nowhere near the expense total.
@@ -183,12 +199,12 @@ def verify_ca_pack(fixtures: Path) -> None:
     check("ca pack: no investment in expenses", any("PARAG" in (m or "") for m in merchants), False)
 
     inv = wb["Investments"]
-    inv_header = 5  # three notes, blank, header
+    inv_header = header_row_of(inv, "Date")
     check("ca pack: investment headers start correctly", inv.cell(inv_header, 1).value, "Date")
     check("ca pack: investment amount", inv.cell(inv_header + 1, 3).value, 10000.0)
 
     sales = wb["Sales (GST)"]
-    sales_header = 5
+    sales_header = header_row_of(sales, "Date")
     check("ca pack: sales headers", [c.value for c in sales[sales_header]][:9],
           ["Date", "GST NO", "Invoice no", "Name", "Taxable", "CGST", "SGST", "IGST", "Total"])
     check("ca pack: taxable value", sales.cell(sales_header + 1, 5).value, 40000.0)
@@ -198,7 +214,7 @@ def verify_ca_pack(fixtures: Path) -> None:
     check("ca pack: gst type", sales.cell(sales_header + 1, 12).value, "RCM")
 
     flow = wb["Cash flow"]
-    flow_header = 4
+    flow_header = header_row_of(flow, "Month")
     check("ca pack: cash flow has an Invested column",
           [c.value for c in flow[flow_header]][:3], ["Month", "Expenses", "Invested"])
 

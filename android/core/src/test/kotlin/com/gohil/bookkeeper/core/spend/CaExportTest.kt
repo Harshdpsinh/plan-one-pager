@@ -270,4 +270,42 @@ class CaExportTest {
         assertEquals("M", CellRef.columnName(12))
         assertEquals("AA", CellRef.columnName(26))
     }
+
+    @Test
+    fun `flags an expense that is also a GST purchase instead of silently dropping it`() {
+        // The Sharma invoice is booked as an expense off the statement AND as a GST purchase
+        // off the invoice, at the same date and total. Counting it twice overstates the month.
+        val withOverlap = input().copy(
+            spend = SpendSummary.from(
+                listOf(
+                    spendItem(5, "1240.00", SpendCategory.MEALS, "UPI/SWIGGY LTD"),
+                    SpendItem(
+                        date = LocalDate.of(2026, 6, 12),
+                        merchant = "SHARMA OFFICE SUPPLIES",
+                        amount = BigDecimal("2360.00"),
+                        category = SpendCategory.OFFICE,
+                        matchedOn = "office supplies",
+                        confident = true,
+                        source = "hdfc-june.pdf",
+                    ),
+                ),
+            ),
+        )
+        val expenses = sheetText(CaExport.build(withOverlap), "Expenses")
+
+        assertContains(expenses, "Also in Purchases (GST)")
+        assertContains(expenses, "Yes - same date and amount")
+        assertContains(expenses, "Count them ONCE")
+        // Both rows survive — deleting one would lose a genuine repeat payment.
+        assertContains(expenses, "SHARMA OFFICE SUPPLIES")
+        assertContains(sheetText(CaExport.build(withOverlap), "Summary"), "Rows appearing in BOTH")
+    }
+
+    @Test
+    fun `says nothing about overlap when there is none`() {
+        val expenses = sheetText(CaExport.build(input()), "Expenses")
+        assertContains(expenses, "Also in Purchases (GST)")
+        assertFalse(expenses.contains("Count them ONCE"), "no overlap, so no warning")
+        assertFalse(expenses.contains("Yes - same date and amount"))
+    }
 }

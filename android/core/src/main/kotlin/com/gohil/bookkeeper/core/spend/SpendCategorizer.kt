@@ -128,6 +128,10 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "stationery", "staples", "office depot", "printer", "cartridge", "toner",
                     "xerox", "printing", "courier", "dtdc", "bluedart", "blue dart", "delhivery",
                     "fedex", "dhl", "india post", "speed post", "paper", "furniture",
+                    // Added after a live run left a vendor called "SHARMA OFFICE SUPPLIES
+                    // PVT LTD" uncategorised: the list had "office depot" but not the plain
+                    // words an Indian supplier actually trades under.
+                    "office supplies", "office supply", "stationers", "computer supplies",
                 ),
                 priority = 2,
             ),

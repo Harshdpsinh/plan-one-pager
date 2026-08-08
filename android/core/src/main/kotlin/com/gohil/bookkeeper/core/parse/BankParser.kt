@@ -200,7 +200,12 @@ object BankParser {
         d = Regex("""\b\d{4}-\d{2}-\d{2}\b""").replace(d, " ")
         d = Patterns.MONEY_TOKEN.replace(d, " ")
         d = Regex("""\b(dr|cr)\b""", RegexOption.IGNORE_CASE).replace(d, " ")
-        d = Regex("""\s+""").replace(d, " ").trim().trim('-', '|', ':').trim()
+        // Removing the reference number out of "UPI/SWIGGY LTD/8812" leaves the separator
+        // behind, so the merchant reached the accountant's Excel as "UPI/SWIGGY LTD/".
+        // Collapse any run of separators the removals stranded, then trim the ends.
+        d = Regex("""\s*([/\\|:\-])\s*(?=[/\\|:\-]|\s*$)""").replace(d, "$1")
+        d = Regex("""[/\\|:\-]+\s*$""").replace(d, "")
+        d = Regex("""\s+""").replace(d, " ").trim().trim('-', '|', ':', '/', '\\').trim()
         return d.take(MAX_DESCRIPTION)
     }
 

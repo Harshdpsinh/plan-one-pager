@@ -146,4 +146,26 @@ class BankParserTest {
         )
         assertEquals("1240.00", result.transactions.single().amount.toPlainString())
     }
+
+    @Test
+    fun `does not leave the separator behind when a reference number is stripped`() {
+        // Regression: "UPI/SWIGGY LTD/8812" became "UPI/SWIGGY LTD/" and that trailing slash
+        // reached the accountant's Excel.
+        val result = BankParser.parse("05/06/2026 UPI/SWIGGY LTD/8812 1,240.00 DR", StatementSource.BANK)
+        assertEquals("UPI/SWIGGY LTD", result.transactions.single().description)
+    }
+
+    @Test
+    fun `keeps separators that sit between real words`() {
+        val result = BankParser.parse("11/06/2026 UPI/AIRTEL BROADBAND/44219 1,199.00 DR", StatementSource.BANK)
+        assertEquals("UPI/AIRTEL BROADBAND", result.transactions.single().description)
+    }
+
+    @Test
+    fun `strips a trailing dash left by a removed marker`() {
+        val result = BankParser.parse("09/06/2026 ACH D- SIP PARAG PARIKH 10,000.00 DR", StatementSource.BANK)
+        val d = result.transactions.single().description
+        assertTrue(!d.endsWith("-") && !d.endsWith("/"), "dangling separator in '$d'")
+        assertTrue("PARAG PARIKH" in d)
+    }
 }

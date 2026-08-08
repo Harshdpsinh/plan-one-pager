@@ -34,10 +34,32 @@ object CaExport {
         val generatedOn: LocalDate = LocalDate.now(),
     )
 
+    /**
+     * An expense row that is also a GST purchase row.
+     *
+     * The two sheets are read from different screens: Expenses comes off the bank and card
+     * statements, Purchases (GST) off the invoices. Do both for the same purchase — which the
+     * instructions actively encourage — and the same money appears twice, at two different
+     * figures (statements carry the invoice total, the GST sheet splits taxable from tax).
+     * Silently deduplicating would be worse than the overlap, because an expense genuinely
+     * paid twice in a month is a real thing. So both stay, and both say so.
+     */
+    private fun overlaps(input: Input): Set<Pair<LocalDate, BigDecimal>> {
+        val purchases = input.purchaseRows.mapNotNull { row ->
+            val date = row.date ?: return@mapNotNull null
+            val total = row.totalGrand ?: return@mapNotNull null
+            date to total.stripTrailingZeros()
+        }.toSet()
+        return input.spend.items
+            .map { it.date to it.amount.stripTrailingZeros() }
+            .filter { it in purchases }
+            .toSet()
+    }
+
     fun build(input: Input): ByteArray = XlsxWriter.build(
         listOf(
             summarySheet(input),
-            expensesSheet(input.spend),
+            expensesSheet(input.spend, overlaps(input)),
             expenseCategorySheet(input.spend),
             investmentsSheet(input.investments),
             salesSheet(input.salesRows),
@@ -103,6 +125,19 @@ object CaExport {
             "listed at the bottom of 'Expenses' with a flag",
         )
 
+        val overlapping = overlaps(input)
+        if (overlapping.isNotEmpty()) {
+            val overlapTotal = input.spend.items
+                .filter { (it.date to it.amount.stripTrailingZeros()) in overlapping }
+                .fold(BigDecimal.ZERO) { a, i -> a + i.amount }
+            line(
+                "Rows appearing in BOTH Expenses and Purchases (GST)",
+                Cell.Money(overlapTotal),
+                "${overlapping.size} row(s) — same purchase read from the statement AND the " +
+                    "invoice. Count once. Flagged in the 'Also in Purchases (GST)' column.",
+            )
+        }
+
         return XlsxWriter.Sheet(
             name = "Summary",
             headers = listOf("Item", "Amount", "Note"),
@@ -117,18 +152,25 @@ object CaExport {
         )
     }
 
-    private fun expensesSheet(spend: SpendSummary): XlsxWriter.Sheet {
+    private fun expensesSheet(
+        spend: SpendSummary,
+        overlaps: Set<Pair<LocalDate, BigDecimal>>,
+    ): XlsxWriter.Sheet {
         // Flagged rows last: a CA scanning the sheet should reach the settled figures first
         // and the questions in one block at the end, rather than sifting them out by eye.
         val ordered = spend.items.sortedWith(
             compareBy({ it.confident && it.category != SpendCategory.UNCATEGORISED }, { it.date }),
         ).reversed()
 
+        val overlapTotal = spend.items
+            .filter { (it.date to it.amount.stripTrailingZeros()) in overlaps }
+            .fold(BigDecimal.ZERO) { a, i -> a + i.amount }
+
         return XlsxWriter.Sheet(
             name = "Expenses",
             headers = listOf(
                 "Date", "Merchant / narration", "Amount", "Category",
-                "Matched on", "Needs check", "Source file",
+                "Matched on", "Needs check", "Also in Purchases (GST)", "Source file",
             ),
             rows = ordered.map { item ->
                 listOf(
@@ -144,15 +186,31 @@ object CaExport {
                             else -> null
                         },
                     ),
+                    Cell.of(
+                        if ((item.date to item.amount.stripTrailingZeros()) in overlaps) {
+                            "Yes - same date and amount"
+                        } else {
+                            null
+                        },
+                    ),
                     Cell.Text(item.source),
                 )
             },
             totals = listOf(Cell.Text("Total"), Cell.Blank, Cell.Money(spend.total)),
-            notes = listOf(
-                "Every outflow read from the statements, minus anything identified as an investment or a loan movement.",
-                "'Matched on' is the keyword that chose the category — a wrong category is corrected by editing that keyword list, not by hand-editing this sheet.",
-            ),
-            widths = mapOf(0 to 12, 1 to 46, 2 to 14, 3 to 24, 4 to 20, 5 to 24, 6 to 28),
+            notes = buildList {
+                add("Every outflow read from the statements, minus anything identified as an investment or a loan movement.")
+                add("'Matched on' is the keyword that chose the category — a wrong category is corrected by editing that keyword list, not by hand-editing this sheet.")
+                if (overlaps.isNotEmpty()) {
+                    add(
+                        "WARNING: ${overlaps.size} row(s) totalling ${overlapTotal.setScale(2, RoundingMode.HALF_UP).toPlainString()} " +
+                            "also appear on 'Purchases (GST)' with the same date and amount. They are almost certainly " +
+                            "the same purchase read from two sources — the statement and the invoice. Count them ONCE. " +
+                            "They are left in both sheets rather than removed, because a genuine repeat payment in the " +
+                            "same month looks identical from here and deleting it would lose real data.",
+                    )
+                }
+            },
+            widths = mapOf(0 to 12, 1 to 46, 2 to 14, 3 to 24, 4 to 20, 5 to 24, 6 to 26, 7 to 28),
         )
     }
 
