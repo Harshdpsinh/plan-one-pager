@@ -53,6 +53,7 @@ class ServerEndToEndTest {
                 stateDir.resolve("passwords.key"),
             ),
             loanRepository = LoanRepository(stateDir.resolve("loans.json")),
+            spendRules = SpendRulesStore(stateDir.resolve("spend-categories.json")),
         )
         // Port 0 lets the OS pick a free one, so the test cannot collide with a real server.
         server.start("127.0.0.1", 0)

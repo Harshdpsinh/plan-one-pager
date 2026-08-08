@@ -169,9 +169,26 @@ principal — not from the schedule. Loans stay out of the spending charts on pu
 alongside spending. The loan book is plain JSON at `~/.gohil-bookkeeper/loans.json`, readable
 in Notepad long after this app is gone.
 
-**Categories** are keyword rules, not a model — `core/.../spend/SpendCategorizer.kt`. Every
-row shows which keyword decided it, so a wrong guess is fixed by editing a list rather than
-retraining anything, and it needs no network.
+**Categories** are keyword rules, not a model. Every row shows which keyword decided it, so a
+wrong guess is fixed by editing a list rather than retraining anything, and it needs no network.
+
+The lists live in **`~/.gohil-bookkeeper/spend-categories.json`**, written out from the shipped
+defaults the first time you run the app. It is plain text:
+
+```json
+{
+  "categories": {
+    "PROFESSIONAL": { "keywords": ["chartered accountant", "audit fee"], "priority": 2 }
+  },
+  "investments": { "MUTUAL_FUND": ["sip instalment", "groww"] }
+}
+```
+
+Add the merchants this month left in **Uncategorised**, save, and press **Analyse spending**
+again — no restart, no rebuild. Higher `priority` wins when two categories match the same line.
+A misspelled category name costs that one rule, not the file; a file that will not parse falls
+back to the built-in lists and says so on screen rather than failing the run. **Restore the
+built-in lists** on the Spend page is the way back from an edit that went wrong.
 
 **Investments are separated from expenses**, on the same argument as loans: a ₹10,000 SIP is
 not money consumed, it is money that changed shape. SIPs, deposits, LIC/insurance premiums,

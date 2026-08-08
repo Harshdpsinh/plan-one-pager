@@ -36,11 +36,12 @@ class BookkeeperServer(
      */
     private val passwordStore: PasswordStore? = PasswordStore(),
     loanRepository: LoanRepository = LoanRepository(),
+    spendRules: SpendRulesStore = SpendRulesStore(),
 ) {
 
     private val sessions = ConcurrentHashMap<String, Session>()
     private val extractor = JvmExtractor()
-    private val spend = SpendRoutes(passwordStore, loanRepository, extractor)
+    private val spend = SpendRoutes(passwordStore, loanRepository, extractor, spendRules)
     private var app: Javalin? = null
 
     class Session {

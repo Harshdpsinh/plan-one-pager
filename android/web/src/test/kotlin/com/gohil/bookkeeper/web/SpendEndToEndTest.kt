@@ -48,6 +48,7 @@ class SpendEndToEndTest {
         server = BookkeeperServer(
             passwordStore = PasswordStore(dir.resolve("passwords.enc"), dir.resolve("passwords.key")),
             loanRepository = LoanRepository(dir.resolve("loans.json")),
+            spendRules = SpendRulesStore(dir.resolve("spend-categories.json")),
         )
         server.start("127.0.0.1", 0)
         port = server.port()
@@ -378,5 +379,47 @@ class SpendEndToEndTest {
 
         form("/api/spend/passwords/forget", emptyMap())
         assertContains(get("/api/spend/passwords").body(), "\"remembered\":0")
+    }
+
+    @Test
+    fun `editing the keyword file changes the next analysis with no restart`() {
+        // The whole promise of the file: a merchant the shipped rules do not know becomes
+        // categorised by editing a list, on the very next run.
+        upload(Multipart().file("files", "hdfc-june.pdf", statementPdf()))
+        assertContains(form("/api/spend/analyse", emptyMap()).body(), "\"matchedOn\":\"swiggy\"")
+
+        Files.writeString(
+            dir.resolve("spend-categories.json"),
+            """{"categories":{"PROFESSIONAL":{"keywords":["swiggy"],"priority":9}}}""",
+        )
+
+        val after = form("/api/spend/analyse", emptyMap()).body()
+        assertContains(after, "PROFESSIONAL")
+        assertFalse(after.contains("\"category\":\"MEALS\""), "the edited rule should win")
+    }
+
+    @Test
+    fun `a broken keyword file falls back to the built-in lists and says so`() {
+        Files.writeString(dir.resolve("spend-categories.json"), "{ this is not json")
+        upload(Multipart().file("files", "hdfc-june.pdf", statementPdf()))
+
+        val body = form("/api/spend/analyse", emptyMap()).body()
+        // Still classified, using the defaults...
+        assertContains(body, "\"matchedOn\":\"swiggy\"")
+        // ...but the user is told, rather than quietly wondering why their edit did nothing.
+        assertContains(body, "could not be read")
+
+        assertContains(get("/api/spend/rules").body(), "spend-categories.json")
+    }
+
+    @Test
+    fun `resetting restores the shipped lists`() {
+        Files.writeString(dir.resolve("spend-categories.json"), """{"categories":{}}""")
+        form("/api/spend/rules/reset", emptyMap())
+
+        val rules = get("/api/spend/rules").body()
+        assertContains(rules, "MEALS")
+        assertContains(rules, "MUTUAL_FUND")
+        assertFalse(rules.contains("could not be read"))
     }
 }

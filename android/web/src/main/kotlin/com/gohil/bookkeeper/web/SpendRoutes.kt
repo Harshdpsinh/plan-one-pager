@@ -35,7 +35,11 @@ class SpendRoutes(
     private val store: PasswordStore?,
     private val loans: LoanRepository,
     private val extractor: JvmExtractor = JvmExtractor(),
-    private val categorizer: SpendCategorizer = SpendCategorizer(),
+    /**
+     * Re-read per analysis rather than held, so editing the keyword file and pressing
+     * Analyse again is enough — no restart.
+     */
+    private val rules: SpendRulesStore = SpendRulesStore(),
 ) {
 
     /**
@@ -83,6 +87,21 @@ class SpendRoutes(
                     "enabled" to (store != null),
                 ),
             )
+        }
+        app.get("/api/spend/rules") { ctx ->
+            val config = rules.config()
+            ctx.json(
+                mapOf(
+                    "location" to rules.location(),
+                    "warning" to rules.lastError,
+                    "categories" to config.categories.mapValues { it.value.keywords.size },
+                    "investments" to config.investments.mapValues { it.value.size },
+                ),
+            )
+        }
+        app.post("/api/spend/rules/reset") { ctx ->
+            rules.reset()
+            ctx.json(mapOf("location" to rules.location(), "warning" to null))
         }
         app.post("/api/spend/passwords/forget") { ctx ->
             store?.forgetAll()
@@ -177,6 +196,12 @@ class SpendRoutes(
     // ── analysis ─────────────────────────────────────────────────────────────────
 
     private fun analyse(ctx: Context, session: Session) {
+        // Loaded once per run, not per file: a mid-analysis edit to the file would otherwise
+        // classify the first statement by one rule set and the second by another.
+        val config = rules.config()
+        val categorizer = config.toCategorizer()
+        val investmentRules = config.toInvestmentRules()
+
         val items = mutableListOf<SpendItem>()
         val invested = mutableListOf<InvestmentItem>()
         val skipped = mutableListOf<Map<String, String>>()
@@ -193,7 +218,7 @@ class SpendRoutes(
             val passwords = listOfNotNull(staged.password)
             when (val extracted = extractor.extract(staged.bytes, staged.fileName, passwords)) {
                 is JvmExtractor.Result.Text -> {
-                    val found = itemsFrom(extracted.text, staged.fileName)
+                    val found = itemsFrom(extracted.text, staged.fileName, categorizer, investmentRules)
                     if (found.spend.isEmpty() && found.investments.isEmpty()) {
                         skipped += mapOf(
                             "file" to staged.fileName,
@@ -218,7 +243,7 @@ class SpendRoutes(
         session.investments = investmentSummary
         ctx.json(
             summaryPayload(summary) + investmentPayload(investmentSummary) +
-                mapOf("skipped" to skipped),
+                mapOf("skipped" to skipped, "rulesWarning" to rules.lastError),
         )
     }
 
@@ -236,7 +261,12 @@ class SpendRoutes(
      * Only outflows are classified at all: a credit is money arriving, and charting it as
      * spending would double-count the month.
      */
-    internal fun itemsFrom(text: String, fileName: String): Extracted {
+    internal fun itemsFrom(
+        text: String,
+        fileName: String,
+        categorizer: SpendCategorizer = SpendCategorizer(),
+        investments: InvestmentRules = InvestmentRules(),
+    ): Extracted {
         val source = if (looksLikeCard(text)) StatementSource.CREDIT_CARD else StatementSource.BANK
         val statement = BankParser.parse(text, source)
         if (statement.transactions.isNotEmpty()) {
@@ -246,7 +276,7 @@ class SpendRoutes(
                 val description = txn.description.ifBlank { "(no description)" }
                 // The investment test runs first: a SIP debit is not an expense at all, so
                 // asking "which expense category?" about it is already the wrong question.
-                val asset = InvestmentRules.match("$description ${txn.rawLine}")
+                val asset = investments.match("$description ${txn.rawLine}")
                 if (asset != null) {
                     invested += InvestmentItem(
                         date = txn.date,
@@ -277,7 +307,7 @@ class SpendRoutes(
         val date = invoice.date ?: return Extracted()
         val merchant = invoice.partyName ?: fileName.substringBeforeLast('.')
 
-        InvestmentRules.match("$merchant ${text.take(400)}")?.let { asset ->
+        investments.match("$merchant ${text.take(400)}")?.let { asset ->
             return Extracted(
                 investments = listOf(
                     InvestmentItem(date, merchant, amount, asset.type, asset.matchedOn, fileName),

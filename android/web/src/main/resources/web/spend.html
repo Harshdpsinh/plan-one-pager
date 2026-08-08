@@ -316,7 +316,18 @@
     </div>
   </div>
 
-  <!-- ── 5. Passwords ───────────────────────────────────────────────── -->
+  <!-- ── 5. Category rules ──────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Category keywords</h2>
+    <p class="hint" style="margin-top:0" id="rulesDetail"></p>
+    <div id="rulesWarn"></div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+      <button class="ghost small" id="rulesReset">Restore the built-in lists</button>
+      <span class="hint">Edit the file, save it, then press <strong>Analyse spending</strong> again — no restart needed.</span>
+    </div>
+  </div>
+
+  <!-- ── 6. Passwords ───────────────────────────────────────────────── -->
   <div class="card">
     <h2>Remembered passwords</h2>
     <p class="hint" style="margin-top:0" id="pwDetail"></p>
@@ -464,6 +475,7 @@ function renderDashboard(d) {
   $('reviewCount').textContent = d.needsReview;
   drawInvestments(d.investments || []);
 
+  if (d.rulesWarning) $('rulesWarn').innerHTML = `<div class="note err">${esc(d.rulesWarning)}</div>`;
   $('skipped').innerHTML = (d.skipped || []).length === 0 ? '' :
     '<div class="note warn">' + d.skipped.map(s =>
       `<div><strong>${esc(s.file)}</strong> — ${esc(s.why)}</div>`).join('') + '</div>';
@@ -767,6 +779,24 @@ $('exportBtn').onclick = async () => {
   $('exportMsg').textContent = `Saved ${name}`;
 };
 
+// ── category rules ───────────────────────────────────────────────────────
+async function loadRules() {
+  const d = await (await fetch('/api/spend/rules')).json();
+  const cats = Object.values(d.categories || {}).reduce((a, b) => a + b, 0);
+  const inv = Object.values(d.investments || {}).reduce((a, b) => a + b, 0);
+  $('rulesDetail').innerHTML =
+    `${cats} expense keywords and ${inv} investment keywords, read from ` +
+    `<code>${esc(d.location)}</code>. It is plain text — open it in Notepad and add the ` +
+    `merchants this month left in Uncategorised.`;
+  $('rulesWarn').innerHTML = d.warning
+    ? `<div class="note err">${esc(d.warning)}</div>` : '';
+}
+
+$('rulesReset').onclick = async () => {
+  await fetch('/api/spend/rules/reset', { method: 'POST' });
+  loadRules();
+};
+
 // ── password store ───────────────────────────────────────────────────────
 async function loadPasswordState() {
   const d = await (await fetch('/api/spend/passwords')).json();
@@ -788,6 +818,7 @@ $('startDate').value = new Date().toISOString().slice(0, 10);
 fetch('/api/spend/loans').then(r => r.json()).then(renderLoans);
 loadCashFlow();
 loadPasswordState();
+loadRules();
 </script>
 </body>
 </html>

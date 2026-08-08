@@ -42,47 +42,53 @@ data class InstrumentTotal(val type: InstrumentType, val total: BigDecimal, val 
  * wrong in a table a human reads; an expense wrongly pulled out of the expense list is money
  * that quietly stops appearing in the spending total.
  */
-object InvestmentRules {
+class InvestmentRules(private val rules: Map<InstrumentType, List<String>> = defaults()) {
 
     data class Match(val type: InstrumentType, val matchedOn: String)
-
-    private val RULES: List<Pair<InstrumentType, List<String>>> = listOf(
-        InstrumentType.MUTUAL_FUND to listOf(
-            "mutual fund", "sip instalment", "sip installment", "sip payment", "sip debit",
-            "groww", "kuvera", "coin by zerodha", "bse star mf", "nse mfss", "mf purchase",
-            "nippon india mf", "hdfc amc", "icici prudential mf", "sbi mutual", "axis mutual",
-            "uti mutual", "mirae asset", "parag parikh", "quant mutual", "elss", "cams",
-            "kfintech", "karvy mf", "folio",
-        ),
-        InstrumentType.EQUITY to listOf(
-            "zerodha", "upstox", "angel one", "angel broking", "5paisa", "icici direct",
-            "hdfc securities", "kotak securities", "motilal oswal", "sharekhan", "indmoney",
-            "dhan broking", "demat", "cdsl", "nsdl", "trading account",
-        ),
-        InstrumentType.LIFE_INSURANCE to listOf(
-            "lic premium", "lic of india", "life insurance premium", "hdfc life", "sbi life",
-            "icici pru life", "max life", "tata aia", "bajaj allianz life", "policy premium",
-        ),
-        InstrumentType.DEPOSIT to listOf(
-            "fixed deposit", "term deposit", "recurring deposit", "rd instalment",
-            "rd installment", "auto sweep", "sweep in deposit",
-        ),
-        InstrumentType.RETIREMENT to listOf(
-            "ppf", "national pension", "nps contribution", "epf", "sukanya samriddhi",
-            "provident fund",
-        ),
-        InstrumentType.GOLD to listOf(
-            "sovereign gold bond", "gold bond", "digital gold", "sgb subscription",
-        ),
-    )
 
     fun match(text: String): Match? {
         val lower = text.lowercase()
         // Longest keyword across all rules wins, so "sbi life" beats a shorter accidental hit.
-        return RULES
-            .flatMap { (type, keywords) -> keywords.filter { it in lower }.map { type to it } }
+        return rules.entries
+            .flatMap { (type, keywords) -> keywords.filter { it.lowercase() in lower }.map { type to it } }
             .maxByOrNull { it.second.length }
             ?.let { Match(it.first, it.second) }
+    }
+
+    companion object {
+
+        /** Convenience for callers that have not been given an edited rule set. */
+        fun match(text: String): Match? = InvestmentRules().match(text)
+
+        fun defaults(): Map<InstrumentType, List<String>> = mapOf(
+            InstrumentType.MUTUAL_FUND to listOf(
+                "mutual fund", "sip instalment", "sip installment", "sip payment", "sip debit",
+                "groww", "kuvera", "coin by zerodha", "bse star mf", "nse mfss", "mf purchase",
+                "nippon india mf", "hdfc amc", "icici prudential mf", "sbi mutual", "axis mutual",
+                "uti mutual", "mirae asset", "parag parikh", "quant mutual", "elss", "cams",
+                "kfintech", "karvy mf", "folio",
+            ),
+            InstrumentType.EQUITY to listOf(
+                "zerodha", "upstox", "angel one", "angel broking", "5paisa", "icici direct",
+                "hdfc securities", "kotak securities", "motilal oswal", "sharekhan", "indmoney",
+                "dhan broking", "demat", "cdsl", "nsdl", "trading account",
+            ),
+            InstrumentType.LIFE_INSURANCE to listOf(
+                "lic premium", "lic of india", "life insurance premium", "hdfc life", "sbi life",
+                "icici pru life", "max life", "tata aia", "bajaj allianz life", "policy premium",
+            ),
+            InstrumentType.DEPOSIT to listOf(
+                "fixed deposit", "term deposit", "recurring deposit", "rd instalment",
+                "rd installment", "auto sweep", "sweep in deposit",
+            ),
+            InstrumentType.RETIREMENT to listOf(
+                "ppf", "national pension", "nps contribution", "epf", "sukanya samriddhi",
+                "provident fund",
+            ),
+            InstrumentType.GOLD to listOf(
+                "sovereign gold bond", "gold bond", "digital gold", "sgb subscription",
+            ),
+        )
     }
 }
 
