@@ -37,11 +37,13 @@ class BookkeeperServer(
     private val passwordStore: PasswordStore? = PasswordStore(),
     loanRepository: LoanRepository = LoanRepository(),
     spendRules: SpendRulesStore = SpendRulesStore(),
+    private val registers: RegisterStore = RegisterStore(),
 ) {
 
     private val sessions = ConcurrentHashMap<String, Session>()
     private val extractor = JvmExtractor()
     private val spend = SpendRoutes(passwordStore, loanRepository, extractor, spendRules)
+    private val workflow = Workflow(registers, spendRules, passwordStore, extractor)
     private var app: Javalin? = null
 
     class Session {
@@ -54,6 +56,9 @@ class BookkeeperServer(
 
         /** The Spend Analysis side of the same browser session. */
         val spend = SpendRoutes.Session()
+
+        /** The upload-only workflow that the single page drives. */
+        val workflow = Workflow.Session()
     }
 
     data class Upload(val name: String, val bytes: ByteArray)
@@ -65,8 +70,22 @@ class BookkeeperServer(
             config.jetty.multipartConfig.maxFileSize(50, io.javalin.config.SizeUnit.MB)
         }.apply {
             before { ctx -> requireToken(ctx) }
-            get("/") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("index.html")) }
-            get("/spend") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("spend.html")) }
+            get("/") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("upload.html")) }
+            get("/setup") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("setup.html")) }
+            get("/crm") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("crm.html")) }
+            // The old dashboard and the workbook-upload screen stay reachable for anyone who
+            // wants the charts or the loan book; the front door is now uploads only.
+            get("/dashboard") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("spend.html")) }
+            get("/spend") { ctx -> ctx.redirect("/dashboard") }
+            get("/registers") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("index.html")) }
+            get("/api/registers") { ctx -> ctx.json(registerState()) }
+            post("/api/registers") { ctx -> saveRegister(ctx) }
+            post("/api/registers/forget") { ctx ->
+                RegisterType.entries.firstOrNull { it.name == ctx.formParam("type") }
+                    ?.let { registers.forget(it) }
+                ctx.json(registerState())
+            }
+            workflow.register(this) { ctx -> sessionOf(ctx).workflow }
             post("/api/process") { ctx -> handleProcess(ctx) }
             post("/api/write") { ctx -> handleWrite(ctx) }
             get("/api/download/{key}") { ctx -> handleDownload(ctx) }
@@ -333,6 +352,29 @@ class BookkeeperServer(
         ReviewReason.AMBIGUOUS_CATEGORY -> "Personal or business?"
         ReviewReason.UNMATCHED_CREDIT -> "Unexplained money received"
         ReviewReason.DUPLICATE_SUSPECTED -> "Possible duplicate"
+    }
+
+    private fun registerState(): Map<String, Any?> = mapOf(
+        "location" to registers.location(),
+        "registers" to RegisterType.entries.map { type ->
+            val register = registers.get(type)
+            mapOf(
+                "type" to type.name,
+                "label" to if (type == RegisterType.PURCHASE) "Purchase Register" else "Sales Register",
+                "configured" to (register != null),
+                "fileName" to register?.fileName,
+                "sheets" to register?.sheetNames.orEmpty(),
+            )
+        },
+    )
+
+    private fun saveRegister(ctx: Context) {
+        val type = RegisterType.entries.firstOrNull { it.name == ctx.formParam("type") }
+            ?: throw IllegalArgumentException("Which register is this?")
+        val file = ctx.uploadedFile("workbook")
+            ?: throw IllegalArgumentException("Choose a .xlsx workbook.")
+        registers.put(type, file.filename(), file.content().readBytes())
+        ctx.json(registerState())
     }
 
     private fun page(name: String): String =

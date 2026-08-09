@@ -149,8 +149,10 @@ class ServerEndToEndTest {
 
     @Test
     fun `serves the page`() {
+        // The front door is now the upload-only page; the workbook screen this test drives
+        // moved to /registers when Excel was taken off the front end.
         val res = client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/")).GET().build(),
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/registers")).GET().build(),
             HttpResponse.BodyHandlers.ofString(),
         )
         assertEquals(200, res.statusCode())

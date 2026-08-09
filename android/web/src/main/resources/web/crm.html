@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clients — Gohil Bookkeeper</title>
+<style>
+  :root { color-scheme: light; --bg:#f6f7f9; --card:#fff; --ink:#14181f; --muted:#666e7a;
+    --line:#dfe3e8; --accent:#1b5e4a; --ok:#16663f; --ok-bg:#eef7f1; --warn:#8a5a00; --warn-bg:#fff8e6; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    color-scheme: dark; --bg:#14171c; --card:#1c2027; --ink:#e8eaed; --muted:#9aa3ae;
+    --line:#2c323b; --accent:#4bbd91; --ok:#7fd6a8; --ok-bg:#16261e; --warn:#e0b45c; --warn-bg:#2a2415; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1000px; margin:0 auto; padding:28px 16px 80px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 22px; font-size:.92rem; } .sub a { color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  table { width:100%; border-collapse:collapse; font-size:.87rem; }
+  th,td { text-align:left; padding:8px 9px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  td.wrap-cell { white-space:normal; min-width:190px; }
+  .scroll { overflow-x:auto; }
+  .hint { font-size:.82rem; color:var(--muted); }
+  .badge { font-size:.72rem; font-weight:700; padding:3px 8px; border-radius:999px;
+    background:var(--ok-bg); color:var(--ok); }
+  .badge.due { background:var(--warn-bg); color:var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Clients &amp; suppliers</h1>
+  <p class="sub">Built from the invoices in this session — nothing typed in by hand.
+    · <a href="/">Back to uploads</a></p>
+  <div class="card"><div class="scroll"><table id="t"></table></div><div id="empty"></div></div>
+</div>
+<script>
+const inr2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money2 = (v) => '₹' + inr2.format(Number(v || 0));
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+fetch('/api/crm').then(r => r.json()).then(d => {
+  if (!d.parties.length) {
+    document.getElementById('t').innerHTML = '';
+    document.getElementById('empty').innerHTML = d.processed
+      ? '<p class="hint">No invoices with a party name were read in this session.</p>'
+      : '<p class="hint">Upload and read some documents first — this list is built from them.</p>';
+    return;
+  }
+  document.getElementById('t').innerHTML =
+    '<thead><tr><th>Party</th><th>GST number</th><th>Relationship</th>' +
+    '<th class="num">Invoices</th><th class="num">Total billed</th><th class="num">GST</th>' +
+    '<th class="num">Average</th><th>First</th><th>Last</th><th>Treatment</th><th>Unpaid</th>' +
+    '</tr></thead><tbody>' +
+    d.parties.map(p => `<tr>
+      <td class="wrap-cell"><strong>${esc(p.name)}</strong></td>
+      <td>${esc(p.gstNo || '—')}</td>
+      <td>${esc(p.role)}</td>
+      <td class="num">${p.invoiceCount}</td>
+      <td class="num">${money2(p.totalBilled)}</td>
+      <td class="num">${money2(p.totalTax)}</td>
+      <td class="num">${money2(p.averageInvoice)}</td>
+      <td>${esc(p.firstSeen || '—')}</td>
+      <td>${esc(p.lastSeen || '—')}</td>
+      <td>${p.gstTreatment ? `<span class="badge">${esc(p.gstTreatment)}</span>` : '—'}</td>
+      <td>${p.unpaidCount ? `<span class="badge due">${p.unpaidCount}</span>` : '0'}</td>
+    </tr>`).join('') + '</tbody>';
+});
+</script>
+</body>
+</html>

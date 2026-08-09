@@ -92,4 +92,35 @@ class SpendRulesConfigTest {
         )
         assertEquals(SpendCategory.MEALS, parsed.toCategorizer().classify("zomato").category)
     }
+
+    @Test
+    fun `no category loses keywords on the way to the file`() {
+        // The file is keyed by category name, so two rules sharing a category would silently
+        // overwrite each other on write. That happened: adding a second OFFICE rule wiped the
+        // office-supplies keywords, and only a round-trip test caught it.
+        val byCategory = SpendCategorizer.defaults().groupBy { it.category }
+        val duplicated = byCategory.filterValues { it.size > 1 }.keys
+        assertTrue(
+            duplicated.isEmpty(),
+            "these categories have more than one editable rule and would lose keywords: $duplicated",
+        )
+
+        val written = SpendRulesConfig.defaults()
+        for (rule in SpendCategorizer.defaults()) {
+            val stored = written.categories[rule.category.name]?.keywords.orEmpty()
+            assertEquals(
+                rule.keywords.size, stored.size,
+                "${rule.category} lost keywords when written to the file",
+            )
+        }
+    }
+
+    @Test
+    fun `a hardcoded rule survives an empty or hostile file`() {
+        // Cash withdrawal is a standing instruction, not a tunable keyword. Wiping the file
+        // must not switch it off.
+        val emptied = SpendRulesConfig.fromJson("""{"categories":{},"investments":{}}""")
+        assertEquals(SpendCategory.OFFICE, emptied.toCategorizer().classify("ATM WDL 0234").category)
+        assertEquals(SpendCategory.OFFICE, SpendCategorizer(emptyList()).classify("CASH WITHDRAWAL").category)
+    }
 }

@@ -127,4 +127,39 @@ class SpendCategorizerTest {
             categorizer.classify("SHARMA OFFICE SUPPLIES PVT LTD").category,
         )
     }
+
+    @Test
+    fun `a cash withdrawal is booked to Office Expenses`() {
+        // Standing instruction for this business: cash off the bank account is an office
+        // expense. Several banks, several narration styles.
+        val cases = listOf(
+            "ATM WDL 0234 AXIS BANK ELLISBRIDGE",
+            "CASH WITHDRAWAL BY SELF",
+            "NWD-451233-ATM CASH",
+            "EAW-4315XXXXXX1234-ATM AHMEDABAD",
+            "ATM WITHDRAWAL 15/06/2026",
+        )
+        for (line in cases) {
+            val hit = categorizer.classify(line)
+            assertEquals(SpendCategory.OFFICE, hit.category, line)
+            assertTrue(hit.confident, "a hardcoded rule must not ask the user: $line")
+        }
+    }
+
+    @Test
+    fun `the withdrawal fee stays a bank charge, not an office expense`() {
+        // The cash is an office expense; the bank's fee for handing it over is not.
+        val hit = categorizer.classify("ATM WDL CHARGE INCL GST")
+        assertEquals(SpendCategory.BANK_CHARGES, hit.category)
+        assertTrue(hit.confident, "the priority ordering resolves this deliberately")
+    }
+
+    @Test
+    fun `a deliberate priority ordering is not reported as ambiguous`() {
+        // Regression: BANK_CHARGES and the cash rule both match "ATM WDL CHARGE", which used
+        // to mark it contested and would now stop the run to ask about a routine ATM fee.
+        assertTrue(categorizer.classify("ATM WDL CHARGE").confident)
+        // A genuine tie between two same-priority rules is still flagged.
+        assertFalse(categorizer.classify("MYNTRA CAFE COMBO ORDER").confident)
+    }
 }

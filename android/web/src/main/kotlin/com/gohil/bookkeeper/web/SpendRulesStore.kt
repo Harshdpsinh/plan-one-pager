@@ -53,6 +53,29 @@ class SpendRulesStore(private val file: Path = PasswordStore.defaultDir().resolv
 
     fun investmentRules(): InvestmentRules = config().toInvestmentRules()
 
+    /**
+     * Teach it one merchant, from an answer given in the UI.
+     *
+     * This is what makes the human-in-the-loop step converge instead of repeating: every
+     * question answered with "remember this" is a question not asked next month.
+     */
+    @Synchronized
+    fun addKeyword(category: com.gohil.bookkeeper.core.spend.SpendCategory, keyword: String) {
+        val current = config()
+        val existing = current.categories[category.name]
+            ?: SpendRulesConfig.CategoryRule(emptyList(), priority = 2)
+        if (keyword.lowercase() in existing.keywords.map { it.lowercase() }) return
+
+        val updated = current.copy(
+            categories = current.categories + (
+                category.name to existing.copy(keywords = existing.keywords + keyword.lowercase())
+                ),
+        )
+        Files.createDirectories(file.parent)
+        Files.writeString(file, updated.toJson())
+        lastError = null
+    }
+
     /** Overwrite with the shipped lists — the way back from an edit that went wrong. */
     @Synchronized
     fun reset(): SpendRulesConfig {

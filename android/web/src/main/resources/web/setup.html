@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Gohil Bookkeeper</title>
+<style>
+  :root { color-scheme: light; --bg:#f6f7f9; --card:#fff; --ink:#14181f; --muted:#666e7a;
+    --line:#dfe3e8; --accent:#1b5e4a; --accent-ink:#fff; --ok:#16663f; --ok-bg:#eef7f1;
+    --warn:#8a5a00; --warn-bg:#fff8e6; --err:#a11; --err-bg:#fdf0f0; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    color-scheme: dark; --bg:#14171c; --card:#1c2027; --ink:#e8eaed; --muted:#9aa3ae;
+    --line:#2c323b; --accent:#4bbd91; --accent-ink:#08130f; --ok:#7fd6a8; --ok-bg:#16261e;
+    --warn:#e0b45c; --warn-bg:#2a2415; --err:#f08d8d; --err-bg:#2c1a1a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; padding:28px 16px 80px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; } h2 { font-size:1rem; margin:0 0 10px; }
+  .sub { color:var(--muted); margin:0 0 22px; font-size:.92rem; } .sub a,a.link { color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:14px; }
+  button { background:var(--accent); color:var(--accent-ink); border:0; border-radius:8px;
+    padding:10px 18px; font:inherit; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button.small { padding:6px 12px; font-size:.84rem; }
+  input[type=file] { width:100%; padding:9px 10px; border:1px solid var(--line);
+    border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; }
+  .hint { font-size:.82rem; color:var(--muted); margin-top:6px; }
+  .note { border-radius:8px; padding:11px 13px; font-size:.87rem; margin:10px 0; }
+  .note.ok { background:var(--ok-bg); color:var(--ok); }
+  .note.warn { background:var(--warn-bg); color:var(--warn); }
+  .note.err { background:var(--err-bg); color:var(--err); }
+  .tag { font-size:.75rem; color:var(--muted); }
+  .badge { font-size:.72rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
+    padding:3px 8px; border-radius:999px; background:var(--ok-bg); color:var(--ok); }
+  .badge.no { background:var(--warn-bg); color:var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>One-time setup</h1>
+  <p class="sub">Your two register workbooks live here so the upload page only ever needs PDFs.
+    · <a href="/">Back to uploads</a></p>
+
+  <div class="card">
+    <h2>Why this is here and not on the upload page</h2>
+    <p class="hint" style="margin-top:0">
+      The app appends to <em>your existing</em> Purchase and Sales sheets — continuing each
+      sheet's own SR NO sequence and leaving every other tab, formula and format exactly as it
+      is. That only works if it has the real files. Give them once here; after that the upload
+      page takes PDFs and nothing else.
+    </p>
+    <p class="hint">
+      These are the server's own copies. The originals on your disk are never modified: each
+      run produces a new file to download.
+    </p>
+  </div>
+
+  <div id="registers"></div>
+  <div id="msg"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function render(d) {
+  $('registers').innerHTML = d.registers.map(r => `
+    <div class="card">
+      <h2>${esc(r.label)}
+        <span class="badge${r.configured ? '' : ' no'}">${r.configured ? 'Ready' : 'Not set'}</span>
+      </h2>
+      ${r.configured ? `<p class="hint" style="margin-top:0">
+          <strong>${esc(r.fileName)}</strong><br>
+          Tabs found: <span class="tag">${r.sheets.map(esc).join(' · ')}</span><br>
+          The month tab is chosen automatically from the dates in your documents.
+        </p>` : `<p class="hint" style="margin-top:0">Choose your ${esc(r.label).toLowerCase()} .xlsx file.</p>`}
+      <input type="file" accept=".xlsx" data-file="${r.type}">
+      <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap">
+        <button class="small" data-save="${r.type}">${r.configured ? 'Replace' : 'Save'}</button>
+        ${r.configured ? `<button class="ghost small" data-forget="${r.type}">Remove</button>` : ''}
+      </div>
+    </div>`).join('') +
+    `<p class="hint">Stored in <code>${esc(d.location)}</code>.</p>`;
+
+  document.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+    const input = document.querySelector(`[data-file="${b.dataset.save}"]`);
+    if (!input.files.length) { $('msg').innerHTML = '<div class="note warn">Choose a file first.</div>'; return; }
+    const body = new FormData();
+    body.append('type', b.dataset.save);
+    body.append('workbook', input.files[0]);
+    const res = await fetch('/api/registers', { method: 'POST', body });
+    const data = await res.json();
+    if (!res.ok) { $('msg').innerHTML = `<div class="note err">${esc(data.error)}</div>`; return; }
+    $('msg').innerHTML = '<div class="note ok">Saved. The upload page can write to it now.</div>';
+    render(data);
+  });
+
+  document.querySelectorAll('[data-forget]').forEach(b => b.onclick = async () => {
+    const body = new FormData(); body.append('type', b.dataset.forget);
+    render(await (await fetch('/api/registers/forget', { method: 'POST', body })).json());
+    $('msg').innerHTML = '<div class="note">Removed.</div>';
+  });
+}
+
+fetch('/api/registers').then(r => r.json()).then(render);
+</script>
+</body>
+</html>

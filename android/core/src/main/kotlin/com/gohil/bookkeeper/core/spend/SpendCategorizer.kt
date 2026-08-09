@@ -66,7 +66,16 @@ data class Classification(
  * The longest match wins rather than the first, so "credit card" beats a bare "card" and
  * "google workspace" beats "google".
  */
-class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
+class SpendCategorizer(editable: List<SpendRule> = defaults()) {
+
+    /**
+     * The hardcoded rules always apply, on top of whatever the editable file says.
+     *
+     * They are kept out of [defaults] — and therefore out of the file the user edits —
+     * because they are standing accounting decisions, not merchant keywords to tune. Emptying
+     * the file cannot switch them off.
+     */
+    private val rules: List<SpendRule> = hardcoded() + editable
 
     fun classify(merchant: String, narration: String = ""): Classification {
         val text = listOf(merchant, narration).filter { it.isNotBlank() }.joinToString(" ")
@@ -79,14 +88,44 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
             compareBy({ it.first.priority }, { it.second.length }),
         )
         // Two rules of different categories both firing means the merchant is genuinely
-        // ambiguous; the category is still assigned but flagged so the UI can mark it.
-        val contested = hits.map { it.first.category }.distinct().size > 1
+        // ambiguous; the category is still assigned but flagged so the UI can ask about it.
+        //
+        // Only rules at the winning priority count. A deliberate ordering — "ATM WDL CHARGE"
+        // is a bank charge, not the cash withdrawal it also looks like — is an explicit
+        // resolution, not an ambiguity, and stopping to ask about it every month would make
+        // the human-in-the-loop prompt worthless through noise.
+        val topPriority = hits.maxOf { it.first.priority }
+        val contested = hits.filter { it.first.priority == topPriority }
+            .map { it.first.category }.distinct().size > 1
         return Classification(best.first.category, best.second, confident = !contested)
     }
 
     fun classify(txn: BankTxn): Classification = classify(txn.description, txn.rawLine)
 
     companion object {
+        /**
+         * Rules that are not up for editing.
+         *
+         * Cash off the bank account is booked to Office Expenses, by explicit instruction.
+         * It sits above the ordinary rules so a withdrawal is never re-read as something
+         * else, and below BANK_CHARGES so the withdrawal *fee* stays a bank charge.
+         *
+         * Deliberately NOT part of [defaults]: that list is written out as the editable file,
+         * which is keyed by category, so a second OFFICE rule there would silently overwrite
+         * the office-supplies keywords on the way to disk.
+         */
+        fun hardcoded(): List<SpendRule> = listOf(
+            SpendRule(
+                SpendCategory.OFFICE,
+                keywords = listOf(
+                    "cash withdrawal", "cash wdl", "atm wdl", "atm withdrawal", "atm cash",
+                    "self withdrawal", "cash withdrawn", "by cash withdrawal", "atm-cash",
+                    "eaw-", "nwd-", "atw-",
+                ),
+                priority = 4,
+            ),
+        )
+
         /**
          * Starting rules, weighted to Indian merchants because that is what the statements
          * contain. Meant to be edited: the first month of real data will show gaps.
@@ -160,9 +199,10 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                     "penalty", "sms charge", "amc charge", "atm charge", "atm wdl charge",
                     "cheque return", "gst on charges", "interest charge", "finance charge",
                 ),
-                // Above the generic rules: "ANNUAL FEE" on a card statement is a bank charge
-                // even when the merchant string also mentions the card network.
-                priority = 3,
+                // Above the generic rules AND above the cash-withdrawal rule below: "ATM WDL
+                // CHARGE INCL GST" is the bank's fee for the withdrawal, not the withdrawal.
+                // The fee is a bank charge; the cash that came out is an office expense.
+                priority = 5,
             ),
             SpendRule(
                 SpendCategory.PERSONAL,

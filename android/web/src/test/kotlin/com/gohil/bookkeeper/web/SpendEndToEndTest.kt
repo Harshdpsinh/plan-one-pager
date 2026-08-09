@@ -155,7 +155,9 @@ class SpendEndToEndTest {
 
     @Test
     fun `serves the spend page`() {
-        val res = get("/spend")
+        // /spend now redirects to /dashboard — the charts kept their home, the front door did not.
+        assertEquals(302, get("/spend").statusCode())
+        val res = get("/dashboard")
         assertEquals(200, res.statusCode())
         assertContains(res.body(), "Spend Analysis")
         assertContains(res.body(), "Personal loans")

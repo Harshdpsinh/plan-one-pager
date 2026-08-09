@@ -105,6 +105,37 @@ switching later means uninstalling first — which clears the saved passwords.
 
 ---
 
+## The pages
+
+| Page | What it is for |
+| --- | --- |
+| **`/`** | The front door. Drop in PDFs, answer anything the app cannot categorise, download the results. Nothing else. |
+| `/setup` | One time only: your Purchase and Sales workbooks. After this the front page never asks for Excel again. |
+| `/crm` | Clients and suppliers, assembled from the invoices — nothing typed by hand. |
+| `/dashboard` | The charts, investments and loan book. |
+| `/registers` | The older screen that takes workbooks per run. Still there; the front page replaces it. |
+
+There is no sign-in. The server listens on your own machine, so a login screen would be
+friction with no threat to answer. `--network` adds a one-time token to the URL, and that is
+the only access control there has ever been.
+
+### Nothing is exported until everything has a category
+
+If a merchant matches no rule — or two rules of equal standing disagree — the run **stops**
+and asks. The Update button stays disabled until every question is answered. Each answer can
+carry a keyword, which is written into `spend-categories.json`, so the same merchant is never
+asked about twice and one answer clears every queued copy of it in the same month.
+
+**Cash withdrawals are always Office Expenses.** That is hardcoded, not a keyword, so emptying
+the rules file cannot switch it off. The bank's *fee* for the withdrawal stays a Bank Charge —
+the cash and the charge for handing it over are two different things.
+
+### The month tab is chosen for you
+
+Both workbooks name their tabs differently — one says `Jun`, the other `June`. The app reads
+the dates out of your documents, takes the commonest month, and matches it against the tab
+names in your own workbook. No typing, and no guessing when nothing matches.
+
 ## The local server (computer, and any device on your network)
 
 Download `gohil-bookkeeper-*.zip` from the Releases page, unzip, and run:
