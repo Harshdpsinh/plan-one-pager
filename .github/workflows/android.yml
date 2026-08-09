@@ -1,0 +1,200 @@
+name: Android
+
+on:
+  push:
+    branches: ["**"]
+    # Pushing a v* tag publishes a release with the APK attached, which is what gives a
+    # plain download link that can be opened and installed on a phone. Deliberately no
+    # `paths:` filter here — path filtering is unreliable for tag pushes, and silently
+    # skipping the release build is worse than a few extra runs.
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "android/**"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The core module is pure JVM, so it needs no Android SDK and gives fast feedback on the
+  # logic that actually decides what goes into the accountant's workbooks.
+  core:
+    name: Core logic tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run core tests
+        run: ./gradlew :core:test
+
+      # The local web server shares the core module, and unlike the Android app it can be
+      # driven end to end here: real multipart upload, real PDF, real .xlsx back out.
+      - name: Run web server tests
+        run: ./gradlew :web:test
+
+      # Reading the generated workbooks back with the same code that wrote them cannot catch
+      # a structural mistake both halves agree on. openpyxl is an independent OOXML parser.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate generated workbooks with openpyxl
+        run: |
+          pip install --quiet openpyxl
+          python3 tools/verify_fixtures.py core/build/fixtures
+
+      # distZip, not installDist: this produces the single archive the user downloads.
+      - name: Package the local server
+        run: ./gradlew :web:distZip
+
+      - name: Upload local server
+        uses: actions/upload-artifact@v4
+        with:
+          name: gohil-bookkeeper-server
+          path: android/web/build/distributions/*.zip
+          if-no-files-found: error
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            android/core/build/reports/tests/test
+            android/web/build/reports/tests/test
+
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    needs: core
+    # Needed to publish the release the APK is attached to.
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: android
+    env:
+      # The `secrets` context is not available inside `if:`, so the presence check is
+      # resolved once here and the steps below branch on this instead.
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Signing with a stable key matters for sideloading: Android refuses to upgrade an
+      # installed app whose signature changed, and reinstalling wipes the saved statement
+      # passwords. Without the secrets the build falls back to debug signing so the workflow
+      # still yields something installable.
+      - name: Restore signing keystore
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > release.keystore
+          cat > keystore.properties <<EOF
+          storeFile=$(pwd)/release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease
+
+      # Built here too so both downloads can be attached to the same release. Artifacts do
+      # not cross jobs on their own.
+      - name: Package the local server
+        run: ./gradlew :web:distZip
+
+      - name: Report signing mode
+        run: |
+          if [ -f keystore.properties ]; then
+            echo "::notice::APK signed with the release keystore."
+          else
+            echo "::warning::No ANDROID_KEYSTORE_B64 secret set — APK is debug-signed. Fine for testing, but adding a release key later requires uninstalling the app first, which clears saved passwords."
+          fi
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f release.keystore keystore.properties
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gohil-bookkeeper-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      # An Actions artifact is a login-gated zip, so it cannot be installed from a phone.
+      # A release asset is a plain public URL that can. The action creates the tag and the
+      # release itself, which matters because the environment this was developed in cannot
+      # push tags; a branch push has to be enough to produce a downloadable build.
+      #
+      # Non-tag builds all reuse the `sideload-latest` tag, so the release is updated in
+      # place and the download link stays the same instead of accumulating one release per
+      # commit.
+      - name: Publish APK to a release
+        if: github.event_name == 'push' || github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'sideload-latest' }}
+          name: Gohil Bookkeeper — sideload build
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+            android/web/build/distributions/*.zip
+          generate_release_notes: false
+          body: |
+            Sideload build of Gohil Bookkeeper.
+
+            **Install:** download the `.apk` below on your phone and tap it. Android will ask
+            you to allow installs from your browser or Files app — that is the normal
+            sideload prompt.
+
+            Runs fully offline. The app has no internet permission, so bank statements and
+            their passwords cannot leave the device.
+
+            ---
+
+            **`gohil-bookkeeper.zip` is the desktop version** — the same processing, as a
+            local web page in your browser. Nothing is uploaded; the updated workbook is a
+            download, so your original file is never modified.
+
+            1. Install **Java 17 or newer** if you do not have it:
+               https://adoptium.net/temurin/releases/?version=17 (Windows: pick the `.msi`)
+            2. Unzip `gohil-bookkeeper.zip`
+            3. **Windows:** double-click **`START-HERE.bat`**
+               **macOS / Linux:** run `./start-here.sh`
+
+            Your browser opens automatically. Leave the console window open while you use it.
+
+            If the window flashes and closes, Java is missing — `START-HERE.bat` detects that
+            and tells you what to install rather than vanishing. Run it from the zip's top
+            folder, not the one inside `bin`.

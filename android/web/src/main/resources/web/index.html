@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gohil Bookkeeper</title>
+<!--
+  Everything is inline on purpose. The server makes no outbound connections and is meant to
+  work on a machine with no internet at all, so a CDN font or stylesheet would be a broken
+  link exactly when it matters.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #14181f; --muted: #666e7a;
+    --line: #dfe3e8; --accent: #1b5e4a; --accent-ink: #fff;
+    --warn: #8a5a00; --warn-bg: #fff8e6; --err: #a11; --err-bg: #fdf0f0;
+    --ok: #16663f; --ok-bg: #eef7f1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1c2027; --ink: #e8eaed; --muted: #9aa3ae;
+      --line: #2c323b; --accent: #4bbd91; --accent-ink: #08130f;
+      --warn: #e0b45c; --warn-bg: #2a2415; --err: #f08d8d; --err-bg: #2c1a1a;
+      --ok: #7fd6a8; --ok-bg: #16261e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: .92rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 12px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+  input[type=text], input[type=password], textarea, input[type=file] {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit;
+  }
+  textarea { min-height: 78px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .86rem; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 260px; }
+  button {
+    background: var(--accent); color: var(--accent-ink); border: 0;
+    border-radius: 8px; padding: 11px 20px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .hint { font-size: .82rem; color: var(--muted); margin-top: 6px; }
+  .note { border-radius: 8px; padding: 11px 13px; font-size: .87rem; margin: 10px 0; }
+  .note.warn { background: var(--warn-bg); color: var(--warn); }
+  .note.err  { background: var(--err-bg);  color: var(--err); }
+  .note.ok   { background: var(--ok-bg);   color: var(--ok); }
+  .review { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .review .tag { font-size: .75rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+  .review .file { font-weight: 600; margin: 2px 0; }
+  .review pre {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 9px; max-height: 190px; overflow: auto; font-size: .78rem; white-space: pre-wrap;
+  }
+  .chk { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: .9rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .dl { display: block; margin: 8px 0; }
+  .hidden { display: none; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gohil Bookkeeper</h1>
+  <p class="sub">Turns a month of documents into rows in your two registers. Runs entirely on this machine.
+    · <a href="/spend" style="color:var(--accent)">Spend analysis &amp; loans →</a></p>
+
+  <form id="form">
+    <div class="card">
+      <h2>1 · Your registers</h2>
+      <div class="row">
+        <div>
+          <label for="purchaseWorkbook">Purchase Register (.xlsx)</label>
+          <input type="file" id="purchaseWorkbook" name="purchaseWorkbook" accept=".xlsx">
+          <label for="purchaseTab">Month tab</label>
+          <input type="text" id="purchaseTab" name="purchaseTab" placeholder="Jun">
+        </div>
+        <div>
+          <label for="salesWorkbook">Sales Register (.xlsx)</label>
+          <input type="file" id="salesWorkbook" name="salesWorkbook" accept=".xlsx">
+          <label for="salesTab">Month tab</label>
+          <input type="text" id="salesTab" name="salesTab" placeholder="June">
+        </div>
+      </div>
+      <p class="hint">The two workbooks name their tabs differently, so both are asked for. Your
+        files are never modified — you download updated copies at the end.</p>
+    </div>
+
+    <div class="card">
+      <h2>2 · Statement passwords</h2>
+      <label for="passwords">One per line — every protected PDF is tried against all of them</label>
+      <textarea id="passwords" name="passwords" placeholder="hdfc-password&#10;axis-card-password&#10;icici-password"></textarea>
+      <p class="hint">Never logged, never sent anywhere — the server makes no outbound
+        connections. A password that <em>successfully opens a file</em> is saved, encrypted,
+        in <code>.gohil-bookkeeper</code> in your home folder, so you are not asked for it
+        again next month. Anyone who can log in as you on this computer could decrypt it.
+        <a href="/spend" style="color:var(--accent)">Manage or erase saved passwords →</a></p>
+      <p class="hint">Prefer being asked each time? The
+        <a href="/spend" style="color:var(--accent)">Spend analysis screen</a> checks each file
+        on its own and lets you untick <strong>Remember it</strong> per file.</p>
+    </div>
+
+    <div class="card">
+      <h2>3 · This month's documents</h2>
+      <div class="row">
+        <div>
+          <label for="bankStatements">Bank statements (PDF, any number)</label>
+          <input type="file" id="bankStatements" name="bankStatements" accept=".pdf" multiple>
+        </div>
+        <div>
+          <label for="cardStatements">Credit card bills (PDF, any number)</label>
+          <input type="file" id="cardStatements" name="cardStatements" accept=".pdf" multiple>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="purchaseInvoices">Purchase bills</label>
+          <input type="file" id="purchaseInvoices" name="purchaseInvoices" accept=".pdf,image/*" multiple>
+        </div>
+        <div>
+          <label for="salesInvoices">Sale / commission invoices</label>
+          <input type="file" id="salesInvoices" name="salesInvoices" accept=".pdf,image/*" multiple>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" id="go">Process documents</button>
+    <span id="busy" class="hidden"><span class="spinner"></span> Reading…</span>
+  </form>
+
+  <div id="error" class="note err hidden"></div>
+  <div id="results" class="hidden"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let lastResult = null;
+
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('error').classList.add('hidden');
+  $('results').classList.add('hidden');
+  $('go').disabled = true;
+  $('busy').classList.remove('hidden');
+  try {
+    const res = await fetch('/api/process', { method: 'POST', body: new FormData($('form')) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Processing failed.');
+    lastResult = data;
+    render(data);
+  } catch (err) {
+    $('error').textContent = err.message;
+    $('error').classList.remove('hidden');
+  } finally {
+    $('go').disabled = false;
+    $('busy').classList.add('hidden');
+  }
+});
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function rowsTable(rows) {
+  if (!rows.length) return '<p class="hint">None.</p>';
+  const head = ['date','invoiceNo','name','taxable','totalGrand','paymentMethod','category','gstType'];
+  const shown = head.filter(h => rows.some(r => r[h]));
+  return '<div class="scroll"><table><tr>' +
+    shown.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr>' +
+    rows.map(r => '<tr>' + shown.map(h => '<td>' + esc(r[h] ?? '') + '</td>').join('') + '</tr>').join('') +
+    '</table></div>';
+}
+
+function render(d) {
+  let html = '<div class="card"><h2>Ready to write</h2>';
+  html += '<p><b>' + d.purchaseRows.length + '</b> row(s) → Purchase Register &nbsp;·&nbsp; <b>' +
+          d.salesRows.length + '</b> row(s) → Sales Register</p>';
+  if (!d.ocrAvailable) {
+    html += '<div class="note warn">Tesseract OCR was not found, so scanned PDFs and photos ' +
+            'cannot be read on this machine. Text-based PDFs work fine. Use the phone app for ' +
+            'photographed bills, or install Tesseract.</div>';
+  }
+  html += '<h2 style="margin-top:16px">Purchase rows</h2>' + rowsTable(d.purchaseRows);
+  html += '<h2 style="margin-top:16px">Sales rows</h2>' + rowsTable(d.salesRows);
+  html += '</div>';
+
+  if (d.review.length) {
+    html += '<div class="card"><h2>Needs your decision (' + d.review.length + ')</h2>' +
+            '<p class="hint">Nothing here is written unless you tick it.</p>';
+    for (const item of d.review) {
+      html += '<div class="review">' +
+        '<div class="tag">' + esc(item.reasonLabel) + '</div>' +
+        '<div class="file">' + esc(item.sourceFile) + '</div>' +
+        '<div>' + esc(item.detail) + '</div>';
+      if (item.rawText) html += '<pre>' + esc(item.rawText) + '</pre>';
+      if (item.hasSuggestion) {
+        html += '<label class="chk"><input type="checkbox" class="approve" value="' + item.index +
+                '"> Add this row anyway</label>';
+      } else {
+        html += '<p class="hint">No row is suggested — check this against the original document.</p>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  html += '<div class="card"><h2>Write</h2>' +
+          '<button id="write">Produce updated workbooks</button> ' +
+          '<span id="wbusy" class="hidden"><span class="spinner"></span> Writing…</span>' +
+          '<div id="downloads"></div></div>';
+
+  $('results').innerHTML = html;
+  $('results').classList.remove('hidden');
+  $('write').addEventListener('click', doWrite);
+}
+
+async function doWrite() {
+  const approved = [...document.querySelectorAll('.approve:checked')].map(c => c.value).join(',');
+  $('write').disabled = true;
+  $('wbusy').classList.remove('hidden');
+  try {
+    const body = new FormData();
+    body.append('approved', approved);
+    const res = await fetch('/api/write', { method: 'POST', body });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Writing failed.');
+    const target = $('downloads');
+    if (!data.downloads.length) {
+      target.innerHTML = '<div class="note warn">Nothing to write — no rows were approved, ' +
+                         'or no register and month tab were given.</div>';
+      return;
+    }
+    target.innerHTML = data.downloads.map(dl =>
+      '<div class="note ok">' + esc(dl.summary) + '</div>' +
+      '<a class="dl" href="/api/download/' + encodeURIComponent(dl.key) +
+      '?name=' + encodeURIComponent(dl.name) + '">⬇ Download ' + esc(dl.name) + '</a>'
+    ).join('') + '<p class="hint">Your original files were not modified. Check the downloaded ' +
+      'copies, then replace your originals with them.</p>';
+  } catch (err) {
+    $('downloads').innerHTML = '<div class="note err">' + esc(err.message) + '</div>';
+  } finally {
+    $('write').disabled = false;
+    $('wbusy').classList.add('hidden');
+  }
+}
+</script>
+</body>
+</html>

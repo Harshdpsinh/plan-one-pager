@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A ledger page with ruled lines. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,28h40a3,3 0 0 1 3,3v46a3,3 0 0 1 -3,3h-40a3,3 0 0 1 -3,-3v-46a3,3 0 0 1 3,-3z" />
+    <path
+        android:fillColor="#1B5E4A"
+        android:pathData="M38,38h32v3h-32z M38,47h32v3h-32z M38,56h20v3h-20z M38,65h24v3h-24z" />
+</vector>

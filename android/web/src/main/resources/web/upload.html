@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gohil Bookkeeper</title>
+<!-- Inline everything: this server makes no outbound connections and must work offline. -->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9; --card: #fff; --ink: #14181f; --muted: #666e7a;
+    --line: #dfe3e8; --accent: #1b5e4a; --accent-ink: #fff;
+    --warn: #8a5a00; --warn-bg: #fff8e6; --err: #a11; --err-bg: #fdf0f0;
+    --ok: #16663f; --ok-bg: #eef7f1; --ask: #1c4f8a; --ask-bg: #eef4fc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #14171c; --card: #1c2027; --ink: #e8eaed; --muted: #9aa3ae;
+      --line: #2c323b; --accent: #4bbd91; --accent-ink: #08130f;
+      --warn: #e0b45c; --warn-bg: #2a2415; --err: #f08d8d; --err-bg: #2c1a1a;
+      --ok: #7fd6a8; --ok-bg: #16261e; --ask: #8fbdf0; --ask-bg: #16202e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 28px 16px 90px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: .92rem; }
+  .sub a, a.link { color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 14px; }
+  button { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px;
+    padding: 11px 20px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button.small { padding: 6px 12px; font-size: .84rem; }
+  input[type=password], input[type=text], select {
+    padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; }
+  .hint { font-size: .82rem; color: var(--muted); margin-top: 6px; }
+  .note { border-radius: 8px; padding: 11px 13px; font-size: .87rem; margin: 10px 0; }
+  .note.warn { background: var(--warn-bg); color: var(--warn); }
+  .note.err  { background: var(--err-bg);  color: var(--err); }
+  .note.ok   { background: var(--ok-bg);   color: var(--ok); }
+
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 40px 18px;
+    text-align: center; color: var(--muted); cursor: pointer; transition: .15s; background: var(--bg); }
+  .drop.over { border-color: var(--accent); color: var(--ink); background: var(--ok-bg); }
+  .drop strong { display: block; color: var(--ink); font-size: 1.05rem; margin-bottom: 4px; }
+
+  .doc { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; margin-top: 10px; }
+  .doc.locked { border-color: var(--warn); background: var(--warn-bg); }
+  .doc .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .doc .name { font-weight: 600; flex: 1 1 auto; word-break: break-all; }
+  .badge { font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); }
+  .badge.lock { background: transparent; color: var(--warn); border: 1px solid currentColor; }
+  .badge.bad { background: var(--err-bg); color: var(--err); }
+  .unlock { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .unlock input { flex: 1 1 220px; }
+  .unlock label { display: flex; gap: 6px; align-items: center; font-size: .8rem; color: var(--muted); }
+
+  /* The human-in-the-loop prompt. Deliberately the loudest thing on the page: the run is
+     stopped until it is answered, so it must not read as an optional aside. */
+  .ask { border: 2px solid var(--ask); background: var(--ask-bg); border-radius: 12px;
+    padding: 16px; margin-bottom: 12px; }
+  .ask .q { font-size: .82rem; color: var(--ask); font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 8px; }
+  .ask .what { font-weight: 600; font-size: 1.05rem; word-break: break-word; }
+  .ask .meta { color: var(--muted); font-size: .85rem; margin: 4px 0 12px; }
+  .ask .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .ask select { min-width: 210px; }
+  .ask label { display: flex; gap: 6px; align-items: center; font-size: .82rem; color: var(--muted); }
+
+  .stats { display: flex; gap: 22px; flex-wrap: wrap; }
+  .stat .n { font-size: 1.6rem; font-weight: 700; }
+  .stat .k { color: var(--muted); font-size: .82rem; }
+  .dl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    border-top: 1px solid var(--line); padding: 11px 0; }
+  .dl:first-of-type { border-top: 0; }
+  .dl .n { font-weight: 600; }
+  .steps { counter-reset: s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gohil Bookkeeper</h1>
+  <p class="sub">
+    Drop this month's PDFs in. Everything runs on this computer — nothing is uploaded anywhere.
+    · <a href="/crm">Clients</a> · <a href="/dashboard">Charts &amp; loans</a> · <a href="/setup">Setup</a>
+  </p>
+
+  <div id="setupWarn"></div>
+
+  <!-- 1 · Upload ───────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="drop" id="drop">
+      <strong>Drop your PDFs here</strong>
+      bank statements · credit-card bills · purchase invoices · commission invoices · receipts
+    </div>
+    <input type="file" id="picker" multiple hidden accept=".pdf,.jpg,.jpeg,.png,.webp">
+    <div id="docs"></div>
+    <div id="uploadMsg"></div>
+    <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; align-items:center">
+      <button id="process" disabled>Read the documents</button>
+      <button class="ghost small" id="clear" hidden>Remove all</button>
+    </div>
+  </div>
+
+  <!-- 2 · Questions ─────────────────────────────────────────────────── -->
+  <div id="asking" hidden>
+    <div class="card" style="border-color: var(--ask)">
+      <h2 id="askHead">Before going any further</h2>
+      <p class="hint" style="margin-top:0">
+        These did not match any rule, so the app will not guess. Nothing is written to your
+        registers until every one is answered.
+      </p>
+    </div>
+    <div id="asks"></div>
+  </div>
+
+  <!-- 3 · Results ───────────────────────────────────────────────────── -->
+  <div class="card" id="result" hidden>
+    <h2>What was read</h2>
+    <div class="stats" id="stats"></div>
+    <div id="skipped"></div>
+    <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; align-items:center">
+      <button id="finish" disabled>Update registers &amp; build the CA file</button>
+      <span class="hint" id="finishHint"></span>
+    </div>
+    <div id="downloads"></div>
+  </div>
+
+  <!-- 4 · Bundle ────────────────────────────────────────────────────── -->
+  <div class="card" id="bundleCard" hidden>
+    <h2>Send the raw documents to your CA</h2>
+    <p class="hint" style="margin-top:0" id="bundleHint"></p>
+    <button class="ghost" id="bundle">Download all PDFs as one file</button>
+    <span class="hint" id="bundleMsg"></span>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
+const inr2 = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (v) => '₹' + inr.format(Number(v || 0));
+const money2 = (v) => '₹' + inr2.format(Number(v || 0));
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let state = null;
+
+// ── upload ───────────────────────────────────────────────────────────────
+const drop = $('drop'), picker = $('picker');
+drop.onclick = () => picker.click();
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = (e) => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files.length) send(e.dataTransfer.files);
+};
+picker.onchange = () => { if (picker.files.length) send(picker.files); picker.value = ''; };
+
+async function send(files) {
+  const body = new FormData();
+  for (const f of files) body.append('files', f);
+  $('uploadMsg').innerHTML = '<div class="note">Checking each file…</div>';
+  const res = await fetch('/api/docs/upload', { method: 'POST', body });
+  const data = await res.json();
+  if (!res.ok) { $('uploadMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`; return; }
+  $('uploadMsg').innerHTML = '';
+  render(data);
+}
+
+async function post(url, fields) {
+  const body = new FormData();
+  for (const [k, v] of Object.entries(fields || {})) body.append(k, v);
+  const res = await fetch(url, { method: 'POST', body });
+  return { ok: res.ok, status: res.status, data: await res.json() };
+}
+
+// ── render ───────────────────────────────────────────────────────────────
+function render(d) {
+  state = d;
+
+  $('setupWarn').innerHTML = d.registersConfigured ? '' :
+    `<div class="note warn">No registers are set up yet, so nothing can be written back to
+     your Purchase or Sales sheet. <a class="link" href="/setup">Set them up once →</a>
+     You can still read documents and build the CA file without them.</div>`;
+
+  // Documents
+  $('docs').innerHTML = d.documents.map(f => {
+    const badge =
+      f.state === 'NEEDS_PASSWORD' ? '<span class="badge lock">Password needed</span>' :
+      f.state === 'UNREADABLE' ? '<span class="badge bad">Cannot open</span>' :
+      f.state === 'NOT_A_PDF' ? '<span class="badge">Image</span>' :
+      f.state === 'UNLOCKED_FROM_STORE' ? '<span class="badge">Unlocked</span>' :
+      '<span class="badge">Ready</span>';
+    return `<div class="doc${f.needsPassword ? ' locked' : ''}">
+      <div class="top">
+        <span class="name">${esc(f.fileName)}</span>${badge}
+        <button class="ghost small" data-rm="${f.fileHash}">Remove</button>
+      </div>
+      ${f.note ? `<div class="hint">${esc(f.note)}</div>` : ''}
+      ${f.needsPassword ? `<div class="unlock">
+          <input type="password" data-pw="${f.fileHash}" placeholder="Password for ${esc(f.fileName)}" autocomplete="off">
+          <label><input type="checkbox" data-rem="${f.fileHash}" checked> Remember</label>
+          <button class="small" data-un="${f.fileHash}">Unlock</button>
+        </div>` : ''}
+    </div>`;
+  }).join('');
+
+  document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () =>
+    render((await post('/api/docs/remove', { fileHash: b.dataset.rm })).data));
+  document.querySelectorAll('[data-un]').forEach(b => b.onclick = () => unlock(b.dataset.un));
+  document.querySelectorAll('[data-pw]').forEach(i => i.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); unlock(i.dataset.pw); }
+  });
+
+  $('process').disabled = d.documents.length === 0 || d.locked > 0;
+  $('clear').hidden = d.documents.length === 0;
+  $('bundleCard').hidden = d.documents.length === 0;
+  $('bundleHint').textContent = d.rarAvailable
+    ? 'Packaged as .rar using the RAR program on this computer.'
+    : 'Packaged as .zip — a real .rar needs RARLAB’s licensed program, which is not installed. '
+      + 'WinRAR and Windows both open .zip, so your CA will not notice.';
+
+  if (d.locked > 0) {
+    $('uploadMsg').innerHTML = `<div class="note warn">${d.locked} file(s) are protected.
+      Enter the password for each — the others need nothing.</div>`;
+  }
+
+  renderAsks(d);
+  renderResult(d);
+}
+
+async function unlock(hash) {
+  const pw = document.querySelector(`[data-pw="${hash}"]`);
+  const rem = document.querySelector(`[data-rem="${hash}"]`);
+  const { data } = await post('/api/docs/unlock', {
+    fileHash: hash, password: pw.value, remember: rem && rem.checked ? 'true' : 'false',
+  });
+  render(data);
+  if (data.ok === false) $('uploadMsg').innerHTML = `<div class="note err">${esc(data.error)}</div>`;
+}
+
+$('clear').onclick = async () => {
+  for (const f of (state?.documents || [])) await post('/api/docs/remove', { fileHash: f.fileHash });
+  render((await (await fetch('/api/docs/state')).json()));
+};
+
+// ── the questions ────────────────────────────────────────────────────────
+function renderAsks(d) {
+  const pending = d.pending || [];
+  $('asking').hidden = pending.length === 0;
+  if (!pending.length) return;
+
+  $('askHead').textContent = pending.length === 1
+    ? '1 item needs a category from you'
+    : `${pending.length} items need a category from you`;
+
+  const options = (sel) => (d.categories || []).map(c =>
+    `<option value="${c.key}"${c.key === sel ? ' selected' : ''}>${esc(c.label)}</option>`).join('');
+
+  // A short word from the narration, offered as the keyword to remember. The user can edit
+  // it — "SWIGGY" is a good thing to remember, "8812" is not.
+  const guessKeyword = (text) => {
+    const words = String(text).toLowerCase().replace(/[^a-z ]+/g, ' ').split(/\s+/)
+      .filter(w => w.length > 3 && !['upi','neft','imps','rtgs','payment','debit','from','card','bank'].includes(w));
+    return words[0] || '';
+  };
+
+  $('asks').innerHTML = pending.map(p => `
+    <div class="ask">
+      <div class="q">What is this?</div>
+      <div class="what">${esc(p.description)}</div>
+      <div class="meta">${money2(p.amount)} · ${esc(p.date)} · from ${esc(p.source)} · ${esc(p.why)}</div>
+      <div class="controls">
+        <select data-cat="${p.id}">${options(p.suggestion)}</select>
+        <label>Remember
+          <input type="text" data-kw="${p.id}" value="${esc(guessKeyword(p.description))}"
+                 size="16" placeholder="keyword">
+        </label>
+        <button class="small" data-save="${p.id}">Save</button>
+      </div>
+    </div>`).join('');
+
+  document.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.save;
+    b.disabled = true;
+    const { ok, data } = await post('/api/docs/categorise', {
+      id,
+      category: document.querySelector(`[data-cat="${id}"]`).value,
+      keyword: document.querySelector(`[data-kw="${id}"]`).value,
+    });
+    if (!ok) { b.disabled = false; alert(data.error); return; }
+    render(data);
+  });
+}
+
+// ── results ──────────────────────────────────────────────────────────────
+function renderResult(d) {
+  $('result').hidden = !d.processed;
+  if (!d.processed) return;
+  const c = d.counts, t = d.totals;
+  $('stats').innerHTML = `
+    <div class="stat"><div class="n">${money(t.spend)}</div><div class="k">Expenses · ${c.spend} items</div></div>
+    <div class="stat"><div class="n">${money(t.investments)}</div><div class="k">Invested · ${c.investments} items</div></div>
+    <div class="stat"><div class="n">${c.purchaseRows}</div><div class="k">Purchase register rows</div></div>
+    <div class="stat"><div class="n">${c.salesRows}</div><div class="k">Sales register rows</div></div>
+    <div class="stat"><div class="n">${c.pending}</div><div class="k">Still to answer</div></div>`;
+
+  $('skipped').innerHTML = (d.skipped || []).length === 0 ? '' :
+    '<div class="note warn">' + d.skipped.map(s =>
+      `<div><strong>${esc(s.file)}</strong> — ${esc(s.why)}</div>`).join('') + '</div>';
+
+  $('finish').disabled = !d.readyToExport;
+  $('finishHint').textContent = d.readyToExport
+    ? '' : `Answer the ${c.pending} question(s) above first.`;
+}
+
+$('process').onclick = async () => {
+  $('process').disabled = true;
+  $('uploadMsg').innerHTML = '<div class="note">Reading and categorising…</div>';
+  const { ok, data } = await post('/api/docs/process', {});
+  $('uploadMsg').innerHTML = ok ? '' : `<div class="note err">${esc(data.error)}</div>`;
+  render(data);
+  if (data.pending && data.pending.length) $('asking').scrollIntoView({ behavior: 'smooth' });
+};
+
+$('finish').onclick = async () => {
+  $('finish').disabled = true;
+  const { ok, status, data } = await post('/api/docs/finish', {});
+  if (!ok) {
+    $('downloads').innerHTML = `<div class="note ${status === 409 ? 'warn' : 'err'}">${esc(data.error)}</div>`;
+    render(data);
+    return;
+  }
+  $('downloads').innerHTML = '<div class="note ok">Done. Your original files were not touched — '
+    + 'these are new copies.</div>' + data.downloads.map(x => x.key
+      ? `<div class="dl"><span class="n">${esc(x.name)}</span>
+           <span class="hint" style="flex:1 1 auto; margin:0">${esc(x.summary)}</span>
+           <button class="small" data-get="${x.key}" data-name="${esc(x.name)}">Download</button></div>`
+      : `<div class="note warn">${esc(x.summary)}</div>`).join('');
+
+  document.querySelectorAll('[data-get]').forEach(b => b.onclick = async () => {
+    const res = await fetch('/api/docs/download/' + b.dataset.get);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = b.dataset.name;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+  render(data);
+};
+
+$('bundle').onclick = async () => {
+  $('bundleMsg').textContent = 'Packaging…';
+  const res = await fetch('/api/docs/bundle');
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: 'Could not build the bundle.' }));
+    $('bundleMsg').textContent = e.error; return;
+  }
+  const disp = res.headers.get('Content-Disposition') || '';
+  const name = (disp.match(/filename="([^"]+)"/) || [])[1] || 'documents.zip';
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  $('bundleMsg').textContent = 'Saved ' + name;
+};
+
+fetch('/api/docs/state').then(r => r.json()).then(render);
+</script>
+</body>
+</html>

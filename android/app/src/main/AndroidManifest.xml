@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      There is deliberately NO android.permission.INTERNET here.
+
+      Every step runs on-device: PDF text extraction, OCR, matching, categorisation and the
+      Excel write. Omitting the permission turns "this app does not send your bank statements
+      or their passwords anywhere" from a promise into something the operating system
+      enforces and anyone can verify from the manifest. Nothing in this app can open a socket.
+
+      Consequences worth knowing before adding it back: the bundled ML Kit model works
+      offline precisely because it is bundled, and WorkManager needs no network. If a future
+      change genuinely needs the network, that is a decision to take deliberately, not a
+      line to add in passing.
+    -->
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Documents are read through the Storage Access Framework, which grants access to the
+         specific files the user picks rather than to storage as a whole. -->
+
+    <application
+        android:name=".BookkeeperApp"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GohilBookkeeper"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ML Kit's bundled text recognition model, installed with the APK. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr" />
+    </application>
+</manifest>
