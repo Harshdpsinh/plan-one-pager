@@ -134,6 +134,27 @@ class XlsxAppender(private val pkg: XlsxPackage) {
             ?.let { it.type == null || it.type == "n" }
             ?: true
 
+        // RATE % is stored two different ways in the same user's books. The purchase register
+        // holds 18 with a General format; the sales register holds 0.18 with a 0% format,
+        // which Excel renders as "18%". Both display as 18 and both are right for their own
+        // sheet — but writing 18 into the sales register made it show 1800%, in a document
+        // that goes to a chartered accountant.
+        //
+        // Read off the sheet rather than configured, for the same reason as the date format
+        // above: the workbook already knows, and asking the user to know means asking them
+        // to get it right again every month.
+        //
+        // The ceiling separates the two conventions with room to spare. Indian GST rates top
+        // out at 28, so the largest a fraction can be is 0.28 and the smallest whole rate
+        // worth writing is 1.
+        val rateIsFraction = columns[Col.RATE_PCT]?.let { col ->
+            dataRows.mapNotNull { it.cellAt(col) }
+                .mapNotNull { sheet.cellText(it, shared)?.trim()?.toBigDecimalOrNull() }
+                .filter { it > BigDecimal.ZERO }
+                .maxOrNull()
+                ?.let { it <= FRACTION_CEILING }
+        } ?: false
+
         var rowNumber = (sheet.lastRowNumber()).coerceAtLeast(headerRow.number)
         val firstRowNumber = rowNumber + 1
         var srNo = firstSrNo
@@ -151,6 +172,7 @@ class XlsxAppender(private val pkg: XlsxPackage) {
                 styleOf = styleOf,
                 datesAreSerial = datesAreSerial,
                 date1904 = index.date1904,
+                rateIsFraction = rateIsFraction,
             )
             body.append(rendered.xml)
             if (rendered.usedFormula) usedFormula = true
@@ -260,6 +282,7 @@ class XlsxAppender(private val pkg: XlsxPackage) {
         styleOf: (Col) -> Int?,
         datesAreSerial: Boolean,
         date1904: Boolean,
+        rateIsFraction: Boolean,
     ): RenderedRow {
         val cells = sortedMapOf<Int, String>()
         var usedFormula = false
@@ -293,7 +316,8 @@ class XlsxAppender(private val pkg: XlsxPackage) {
         putText(Col.INVOICE_NO, row.invoiceNo)
         putText(Col.NAME, row.name)
         putText(Col.QTY, row.qty)
-        putNumber(Col.RATE_PCT, row.ratePct)
+        // movePointLeft rather than a division: exact, and never a non-terminating decimal.
+        putNumber(Col.RATE_PCT, row.ratePct?.let { if (rateIsFraction) it.movePointLeft(2) else it })
         putText(Col.HSN, row.hsn)
         putNumber(Col.TAXABLE, row.taxable)
         putNumber(Col.CGST, row.cgst)
@@ -380,6 +404,9 @@ class XlsxAppender(private val pkg: XlsxPackage) {
     companion object {
         private const val HEADER_SEARCH_ROWS = 10
         private const val MIN_HEADER_MATCHES = 3
+
+        /** Above this, a RATE % column is holding whole percentages rather than fractions. */
+        private val FRACTION_CEILING = BigDecimal("0.5")
         private val ISO_LIKE = java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy")
 
         fun open(bytes: ByteArray): XlsxAppender = XlsxAppender(XlsxPackage.read(bytes))

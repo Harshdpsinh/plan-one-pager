@@ -33,8 +33,14 @@ object Patterns {
      * or it swallows the amount's leading figures and leaves only the trailing decimals.
      * Hence `[\d.]+\s*%` with the percent sign required, rather than a loose `.*?`.
      */
+    /**
+     * Horizontal whitespace only, throughout. A labelled amount sits on its label's line;
+     * letting the gap cross a newline made "… CGST SGST IGST" — a row of column headings —
+     * match the "1" that begins the line item underneath, so IGST came back as ₹1 and the
+     * rate derived from it as 0%.
+     */
     fun taxPattern(label: String): Regex = Regex(
-        """$label\s*(?:\(?\s*@?\s*[\d.]+\s*%\s*\)?)?\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*$MONEY""",
+        """$label[ \t]*(?:\(?[ \t]*@?[ \t]*[\d.]+[ \t]*%[ \t]*\)?)?[ \t]*[:\-]?[ \t]*(?:₹|Rs\.?|INR)?[ \t]*$MONEY""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -42,19 +48,63 @@ object Patterns {
     val SGST = taxPattern("SGST")
     val IGST = taxPattern("IGST")
 
+    /** Same line as its label, for the same reason as [taxPattern]. */
     val TAXABLE = Regex(
-        """taxable\s*(?:value|amount|amt)?\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*$MONEY""",
+        """taxable[ \t]*(?:value|amount|amt)?[ \t]*[:\-]?[ \t]*(?:₹|Rs\.?|INR)?[ \t]*$MONEY""",
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * The `(?:\([^)]{0,20}\))?` allows a qualifier between the label and the figure —
+     * KFintech writes "Total Invoice Value (In figure) 2054.05". Without it the specific
+     * alternative failed, the bare `total` alternative matched the tax table's footer
+     * instead, and the register got the taxable value where the invoice total belongs.
+     */
     val GRAND_TOTAL = Regex(
         """(?:grand\s*total|total\s*(?:invoice\s*)?(?:amount|value)|amount\s*payable|net\s*payable|total)""" +
-            """\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*$MONEY""",
+            """\s*(?:\([^)]{0,20}\))?\s*[:\-]?\s*(?:₹|Rs\.?|INR)?\s*$MONEY""",
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * The optional middle word is for "Inv serial No." — KFintech's commission invoices label
+     * it that way, and requiring the two halves to be adjacent left every one of them without
+     * an invoice number.
+     */
     val INVOICE_NO = Regex(
-        """(?:invoice|bill|inv|receipt)\s*(?:no|num|number|#)\s*[:.\-]?\s*([A-Za-z0-9][A-Za-z0-9/\-_]{2,29})""",
+        """(?:invoice|bill|inv|receipt)\s*(?:serial|sr|ref)?\s*(?:no|num|number|#)""" +
+            // A run rather than one character: KFintech writes "Inv serial No. : AXTI/…",
+            // and a single optional separator stopped at the full stop and never reached the
+            // colon. Horizontal whitespace only — one of these invoices leaves the field
+            // empty, and a run that crossed the line break took the next line's label as the
+            // invoice number.
+            """[ \t:.\-]*([A-Za-z0-9][A-Za-z0-9/\-_]{2,29})""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * A date the document has labelled as such, which beats scanning for the first thing that
+     * looks like one.
+     *
+     * "Distribution Commission ... for the month of JUNE - 2026" parses as 20 June 2026 —
+     * month name, then "20" and "26" out of the year. Every commission invoice carries that
+     * sentence, so every one of them was dated wrongly before the label was preferred.
+     */
+    val LABELLED_DATE = Regex(
+        """(?:invoice\s*date|bill\s*date|dated|date)\s*[:.\-]?\s*(.{0,24})""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * The totals line of a tax table: `Total 1740.72 0.00 0.00 313.33`.
+     *
+     * Commission invoices print TAXABLE / CGST / SGST / IGST as column headings with the
+     * figures underneath, so the labelled patterns above — which expect "CGST: 450.00" —
+     * find nothing at all and the whole tax breakdown comes back empty. Four money columns
+     * on a line beginning with Total is that table's footer in both formats seen.
+     */
+    val TOTALS_ROW = Regex(
+        """(?m)^\s*total\s+$MONEY\s+$MONEY\s+$MONEY\s+$MONEY\s*$""",
         RegexOption.IGNORE_CASE,
     )
 

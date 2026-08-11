@@ -239,4 +239,105 @@ class InvoiceParserTest {
         assertNull(inv.totalGrand)
         assertTrue(inv.confidence() < 0.70)
     }
+
+    // ── what the first real commission invoices exposed ──────────────────────────
+    //
+    // A distributor's commission invoice is self-billed: he raises it, so he is its
+    // supplier and the fund house is its recipient. That is the opposite way round from a
+    // vendor bill, and reading it as one put his own GSTIN and his own name into the
+    // counterparty columns of all twenty-one rows of a GST return.
+
+    private val kfintechStyle = """
+        TAX INVOICE
+        Details of Supplier of Service
+        Name Harshdipsinh Pradipsinh Gohil ( ARN-162262 )
+        DAIRY ROAD VIJAYRAJNAGAR, BHAVNAGAR Date : 06/07/2026
+        GUJARAT, 364003 Inv serial No. : AXTI/2026-27/003
+        GSTIN/Unique ID 24BFKPG0156H1ZR
+        Details of Recipient (Billed to)
+        Name Axis Mutual Fund
+        State Code 27
+        GSTIN/Unique ID 27AACTA5925A1Z5
+        Sr.No. Description of Services SAC Taxable Value CGST SGST IGST
+        1 Distribution Commission for 997152 1740.72 0.00% 0.00 0.00% 0.00 18.00% 313.33
+        sale of Mutual Fund products for the month of JUNE - 2026
+        Total 1740.72 0.00 0.00 313.33
+        Total Invoice Value (In figure) 2054.05
+    """.trimIndent()
+
+    private val camsStyle = """
+        Harshdipsinh Pradipsinh Gohil
+        GSTIN    : 24BFKPG0156H1ZR Distributor Code    : ARN-162262
+        Tax Invoice
+        Invoice No    :      BM/26-27/E/2
+        Invoice Date     :          JUL 06,2026
+        Aditya Birla Sun Life Mutual Fund GSTIN    :     27AAATB0102C1ZR
+        Sl.No Description SAC Taxable CGST SGST IGST
+        1 Distributor Commission for Sale 9971 988.38 0 0.00 0 0.00 18 177.91
+        Total 988.38 0.00 0.00 177.91
+        Total Invoice Value 1166.29
+    """.trimIndent()
+
+    @Test
+    fun `a sales invoice takes the recipient, not the party who raised it`() {
+        val inv = InvoiceParser.parse(kfintechStyle, "axis.pdf", InvoiceParser.Counterparty.RECIPIENT)
+        assertEquals("27AACTA5925A1Z5", inv.gstNo)
+        assertEquals("Axis Mutual Fund", inv.partyName)
+    }
+
+    @Test
+    fun `the recipient's name can sit on the same line as its GSTIN`() {
+        val inv = InvoiceParser.parse(camsStyle, "ABSL.pdf", InvoiceParser.Counterparty.RECIPIENT)
+        assertEquals("27AAATB0102C1ZR", inv.gstNo)
+        assertEquals("Aditya Birla Sun Life Mutual Fund", inv.partyName)
+    }
+
+    @Test
+    fun `a purchase invoice still takes the supplier`() {
+        val inv = InvoiceParser.parse(kfintechStyle, "axis.pdf")
+        assertEquals("24BFKPG0156H1ZR", inv.gstNo, "the first GSTIN, as before")
+    }
+
+    @Test
+    fun `the tax breakdown is read from the totals row when the labels are column headings`() {
+        val inv = InvoiceParser.parse(kfintechStyle, "axis.pdf", InvoiceParser.Counterparty.RECIPIENT)
+        assertEquals("1740.72", inv.taxable?.toPlainString())
+        assertEquals("0.00", inv.cgst?.toPlainString())
+        assertEquals("0.00", inv.sgst?.toPlainString())
+        assertEquals("313.33", inv.igst?.toPlainString())
+        assertEquals("2054.05", inv.totalGrand?.toPlainString(), "not the taxable value")
+    }
+
+    @Test
+    fun `the labelled date beats a month named in the description`() {
+        // "for the month of JUNE - 2026" reads as 20 June 2026 — the month name, then 20 and
+        // 26 out of the year. Every one of these invoices carries that sentence.
+        assertEquals(
+            "2026-07-06",
+            InvoiceParser.parse(kfintechStyle, "axis.pdf", InvoiceParser.Counterparty.RECIPIENT).date.toString(),
+        )
+    }
+
+    @Test
+    fun `an invoice number survives a qualifier and a doubled separator`() {
+        assertEquals(
+            "AXTI/2026-27/003",
+            InvoiceParser.parse(kfintechStyle, "axis.pdf", InvoiceParser.Counterparty.RECIPIENT).invoiceNo,
+        )
+    }
+
+    @Test
+    fun `an empty invoice number field does not take the next line`() {
+        // One real invoice leaves "Inv serial No. :" blank. A separator run that crossed the
+        // line break captured the following label as the invoice number.
+        val blank = kfintechStyle.replace("Inv serial No. : AXTI/2026-27/003", "Inv serial No. :")
+        assertNull(InvoiceParser.parse(blank, "lic.pdf", InvoiceParser.Counterparty.RECIPIENT).invoiceNo)
+    }
+
+    @Test
+    fun `the rate comes from the figures, not from the first percent sign on the page`() {
+        // The two taxes that do not apply are printed as 0.00% before the one that does.
+        val inv = InvoiceParser.parse(kfintechStyle, "axis.pdf", InvoiceParser.Counterparty.RECIPIENT)
+        assertEquals("18", inv.ratePct?.toPlainString())
+    }
 }

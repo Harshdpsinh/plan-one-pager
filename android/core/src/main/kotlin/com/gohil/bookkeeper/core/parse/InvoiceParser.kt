@@ -5,25 +5,52 @@ import com.gohil.bookkeeper.core.model.Invoice
 /** Extracts register fields from the text of an invoice, however that text was obtained. */
 object InvoiceParser {
 
-    fun parse(text: String, sourceFile: String): Invoice {
+    /**
+     * Which of the two parties on the invoice the register is about.
+     *
+     * A purchase register records who you bought from — the supplier — and on an ordinary
+     * vendor bill that is whose letterhead it is, so the first GSTIN on the page is right.
+     *
+     * A sales register records who you sold to. The commission invoices here are self-billed:
+     * the distributor raises them, so *he* is the supplier and the fund house is the
+     * recipient. Taking the first GSTIN put the user's own registration in the counterparty
+     * column of all twenty-one rows of a GST return, next to his own name as the customer.
+     */
+    enum class Counterparty { SUPPLIER, RECIPIENT }
+
+    fun parse(
+        text: String,
+        sourceFile: String,
+        counterparty: Counterparty = Counterparty.SUPPLIER,
+    ): Invoice {
         val clean = text.replace(' ', ' ')
 
+        // The tax table's footer, for invoices that print the components as columns rather
+        // than as labelled fields. Both commission-invoice formats do it that way, so the
+        // labelled patterns find nothing and the whole breakdown came back empty.
+        val totalsRow = Patterns.TOTALS_ROW.find(clean)?.groupValues
+
         val taxable = Patterns.firstMoney(Patterns.TAXABLE, clean)
+            ?: totalsRow?.getOrNull(1)?.let(Patterns::money)
         val cgst = Patterns.firstMoney(Patterns.CGST, clean)
+            ?: totalsRow?.getOrNull(2)?.let(Patterns::money)
         val sgst = Patterns.firstMoney(Patterns.SGST, clean)
+            ?: totalsRow?.getOrNull(3)?.let(Patterns::money)
         val igst = Patterns.firstMoney(Patterns.IGST, clean)
+            ?: totalsRow?.getOrNull(4)?.let(Patterns::money)
         val total = Patterns.lastMoney(Patterns.GRAND_TOTAL, clean)
 
-        val extracted = VendorName.extract(clean)
+        val party = party(clean, counterparty)
 
         return Invoice(
             sourceFile = sourceFile,
-            date = Patterns.findDate(clean),
-            gstNo = Patterns.GSTIN.find(clean)?.groupValues?.get(1)?.uppercase(),
+            date = labelledDate(clean) ?: Patterns.findDate(clean),
+            gstNo = party.gstin,
             invoiceNo = Patterns.INVOICE_NO.find(clean)?.groupValues?.get(1)?.trim()?.trimEnd('.', ',', '-'),
-            partyName = extracted ?: VendorName.fromFilename(sourceFile),
+            partyName = party.name ?: VendorName.fromFilename(sourceFile),
             qty = Patterns.QTY.find(clean)?.groupValues?.get(1),
             ratePct = Patterns.RATE_PCT.find(clean)?.groupValues?.get(1)?.let(Patterns::money)
+                ?: derivedRate(taxable, cgst, sgst, igst)
                 ?: Patterns.ANY_PCT.find(clean)?.groupValues?.get(1)?.let(Patterns::money),
             hsn = Patterns.findHsn(clean),
             taxable = taxable,
@@ -32,15 +59,90 @@ object InvoiceParser {
             igst = igst,
             // Fall back to the arithmetic only when the document never states a total.
             totalGrand = total ?: sumOrNull(taxable, cgst, sgst, igst),
-            partyNameFromFilename = extracted == null,
+            partyNameFromFilename = party.name == null,
             rawText = text,
         )
+    }
+
+    private data class Party(val gstin: String?, val name: String?)
+
+    /**
+     * The GSTIN and name of the side of the invoice the register is about.
+     *
+     * Chosen by position rather than by vocabulary: an Indian tax invoice names the supplier
+     * first and the recipient second, and both commission formats follow that — one under
+     * headings ("Details of Recipient (Billed to)"), the other by simply printing the fund's
+     * name and GSTIN further down. Matching the headings instead would need a rule per issuer
+     * and would still miss the one that has no headings.
+     */
+    private fun party(text: String, counterparty: Counterparty): Party {
+        val hits = Patterns.GSTIN.findAll(text).toList()
+        // A single-GSTIN document has named exactly one party, and by elimination that is the
+        // counterparty whichever side we were asked for.
+        val chosen = when (counterparty) {
+            Counterparty.SUPPLIER -> hits.firstOrNull()
+            Counterparty.RECIPIENT -> hits.lastOrNull()
+        } ?: return Party(null, VendorName.extract(text))
+
+        val gstin = chosen.groupValues[1].uppercase()
+        if (counterparty == Counterparty.SUPPLIER) return Party(gstin, VendorName.extract(text))
+        return Party(gstin, nameNear(text, chosen.range.first) ?: VendorName.extract(text))
+    }
+
+    /**
+     * The counterparty's name, given where its GSTIN sits.
+     *
+     * CAMS prints them on one line — "Aditya Birla Sun Life Mutual Fund GSTIN : 27AAA…" — so
+     * the name is whatever precedes the label. KFintech instead puts "Name Axis Mutual Fund"
+     * a few lines above, so failing that, the nearest preceding Name field wins.
+     */
+    private fun nameNear(text: String, gstinAt: Int): String? {
+        val before = text.take(gstinAt)
+        val sameLine = before.substringAfterLast('\n')
+            .substringBefore("GSTIN", "")
+            .trim().trim(':', '-', '|').trim()
+        if (sameLine.length >= MIN_NAME && sameLine.any { it.isLetter() }) return sameLine.take(MAX_NAME)
+
+        return before.lines().asReversed().take(NAME_LOOKBACK)
+            .firstNotNullOfOrNull { line ->
+                NAME_FIELD.find(line)?.groupValues?.get(1)?.trim()?.takeIf { it.length >= MIN_NAME }
+            }
+            ?.take(MAX_NAME)
+    }
+
+    private val NAME_FIELD = Regex("""^\s*name\s*[:.\-]?\s*(.+)$""", RegexOption.IGNORE_CASE)
+
+    /** A date the document labelled, read out of the short run of text after the label. */
+    private fun labelledDate(text: String): java.time.LocalDate? =
+        Patterns.LABELLED_DATE.findAll(text)
+            .firstNotNullOfOrNull { Patterns.findDate(it.groupValues[1]) }
+
+    /**
+     * The GST rate implied by the figures, for a document that prints it only as a column.
+     *
+     * More reliable than reading a percent sign off the page: a commission invoice shows
+     * "0.00%" for the two taxes that do not apply before it shows the one that does, so the
+     * first percentage on the page is reliably the wrong one.
+     */
+    private fun derivedRate(
+        taxable: java.math.BigDecimal?,
+        vararg taxes: java.math.BigDecimal?,
+    ): java.math.BigDecimal? {
+        if (taxable == null || taxable.signum() <= 0) return null
+        val tax = taxes.filterNotNull().fold(java.math.BigDecimal.ZERO) { a, b -> a + b }
+        if (tax.signum() <= 0) return null
+        return tax.multiply(java.math.BigDecimal(100))
+            .divide(taxable, 0, java.math.RoundingMode.HALF_UP)
     }
 
     private fun sumOrNull(vararg parts: java.math.BigDecimal?): java.math.BigDecimal? {
         if (parts.all { it == null }) return null
         return parts.filterNotNull().fold(java.math.BigDecimal.ZERO) { a, b -> a + b }
     }
+
+    private const val MIN_NAME = 3
+    private const val MAX_NAME = 80
+    private const val NAME_LOOKBACK = 12
 }
 
 /**

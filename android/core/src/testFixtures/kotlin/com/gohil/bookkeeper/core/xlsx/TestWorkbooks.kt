@@ -28,6 +28,12 @@ object TestWorkbooks {
         val cgst: String,
         val sgst: String,
         val total: String,
+        /**
+         * What the RATE % column already holds. Defaults to the purchase register's
+         * convention of a whole percentage; pass "0.18" for the sales register's, which
+         * stores the fraction and shows it through a 0% number format.
+         */
+        val ratePct: String = "18",
     )
 
     /**
@@ -202,7 +208,7 @@ object TestWorkbooks {
             append("""<c r="D$r" s="0" t="s"><v>${strings[row.invoiceNo]}</v></c>""")
             append("""<c r="E$r" s="0" t="s"><v>${strings[row.name]}</v></c>""")
             append("""<c r="F$r" s="0"><v>1</v></c>""")
-            append("""<c r="G$r" s="0"><v>18</v></c>""")
+            append("""<c r="G$r" s="0"><v>${row.ratePct}</v></c>""")
             append("""<c r="H$r" s="0"/>""")
             append("""<c r="I$r" s="6"><v>${row.taxable}</v></c>""")
             append("""<c r="J$r" s="6"><v>${row.cgst}</v></c>""")

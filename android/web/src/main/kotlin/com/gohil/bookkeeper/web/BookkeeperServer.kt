@@ -184,8 +184,14 @@ class BookkeeperServer(
                     is JvmExtractor.Result.Text -> when (kind) {
                         "purchaseInvoices" ->
                             purchaseInvoices += InvoiceParser.parse(extracted.text, file.filename())
-                        "salesInvoices" ->
-                            salesInvoices += InvoiceParser.parse(extracted.text, file.filename())
+                        // The sales register records who the sale was to. A commission invoice
+                        // is self-billed, so the distributor is its supplier and the fund
+                        // house is its recipient — the opposite side from a vendor bill.
+                        "salesInvoices" -> salesInvoices += InvoiceParser.parse(
+                            extracted.text,
+                            file.filename(),
+                            InvoiceParser.Counterparty.RECIPIENT,
+                        )
                         "bankStatements" -> BankParser.parse(extracted.text, StatementSource.BANK).let {
                             transactions += it.transactions
                             unparsed += it.unparsed

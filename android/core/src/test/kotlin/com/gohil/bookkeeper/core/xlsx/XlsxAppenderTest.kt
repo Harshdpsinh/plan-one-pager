@@ -317,6 +317,38 @@ class XlsxAppenderTest {
     }
 
     @Test
+    fun `writes RATE % the way the sheet already writes it`() {
+        // Found in the user's own books: the purchase register stores 18 with a General
+        // format, the sales register stores 0.18 with a 0% format. Both display "18".
+        // Writing 18 into the sales register displayed 1800%, in a document that goes to a
+        // chartered accountant, because an appended cell inherits the row above's format.
+        val wholeNumbers = TestWorkbooks.build(sheets = listOf("Jun" to TestWorkbooks.sampleRows(2)))
+        val (_, wholeOut) = appendTo(wholeNumbers, rows = listOf(invoiceRow()))
+        assertEquals("18", cellTextAt(wholeOut, "Jun", "G4"))
+
+        val fractions = TestWorkbooks.build(
+            sheets = listOf("Jun" to TestWorkbooks.sampleRows(2).map { it.copy(ratePct = "0.18") }),
+        )
+        val (_, fractionOut) = appendTo(fractions, rows = listOf(invoiceRow()))
+        assertEquals(
+            "0.18",
+            cellTextAt(fractionOut, "Jun", "G4"),
+            "under a 0% format, 18 renders as 1800% and 0.18 renders as 18%",
+        )
+    }
+
+    @Test
+    fun `an empty RATE % column is written as a whole percentage`() {
+        // Nothing to copy from, so it keeps the plainer of the two conventions rather than
+        // inventing a fraction the sheet has given no reason to expect.
+        val book = TestWorkbooks.build(
+            sheets = listOf("Jun" to TestWorkbooks.sampleRows(2).map { it.copy(ratePct = "") }),
+        )
+        val (_, out) = appendTo(book, rows = listOf(invoiceRow()))
+        assertEquals("18", cellTextAt(out, "Jun", "G4"))
+    }
+
+    @Test
     fun `updates the sheet dimension to cover the new extent`() {
         val (_, out) = appendTo(purchaseBook(), rows = listOf(invoiceRow()))
         val sheet = sheetTextOf(out, "Jun")
