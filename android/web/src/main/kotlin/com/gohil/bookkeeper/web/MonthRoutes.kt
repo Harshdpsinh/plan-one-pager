@@ -234,10 +234,12 @@ class MonthRoutes(
         for (doc in session.docs.values.sortedBy { it.fileName }) {
             val text = doc.text ?: continue
             when (doc.kind) {
-                DocumentKind.PURCHASE_INVOICE ->
-                    purchases += InvoiceParser.parse(text, doc.fileName)
-                DocumentKind.SALES_INVOICE ->
-                    sales += InvoiceParser.parse(text, doc.fileName, InvoiceParser.Counterparty.RECIPIENT)
+                DocumentKind.PURCHASE_INVOICE -> purchases += InvoiceParser.parse(
+                    text, doc.fileName, InvoiceParser.Counterparty.SUPPLIER, ownGstin,
+                )
+                DocumentKind.SALES_INVOICE -> sales += InvoiceParser.parse(
+                    text, doc.fileName, InvoiceParser.Counterparty.RECIPIENT, ownGstin,
+                )
                 DocumentKind.BANK_STATEMENT, DocumentKind.CARD_STATEMENT -> {
                     val source = if (doc.kind == DocumentKind.CARD_STATEMENT) {
                         StatementSource.CREDIT_CARD

@@ -72,7 +72,10 @@ object Patterns {
      * an invoice number.
      */
     val INVOICE_NO = Regex(
-        """(?:invoice|bill|inv|receipt)\s*(?:serial|sr|ref)?\s*(?:no|num|number|#)""" +
+        // Longest alternative first. Regex alternation is leftmost-first, so "num" matched
+        // inside "Number" and the capture began at "ber" — Amazon's AMD2-660495 was written
+        // into the register as "ber".
+        """(?:invoice|bill|inv|receipt)\s*(?:serial|sr|ref)?\s*(?:number|num|no|#)""" +
             // A run rather than one character: KFintech writes "Inv serial No. : AXTI/…",
             // and a single optional separator stopped at the full stop and never reached the
             // colon. Horizontal whitespace only — one of these invoices leaves the field
