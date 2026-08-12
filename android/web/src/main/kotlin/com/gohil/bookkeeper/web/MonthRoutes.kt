@@ -53,11 +53,15 @@ class MonthRoutes(
     class Doc(
         val fileName: String,
         val bytes: ByteArray,
+        /** The box the user put it in. This is what the document is treated as. */
+        val declared: DocumentKind,
         @Volatile var state: PdfProbe.State,
         @Volatile var password: String? = null,
         @Volatile var note: String = "",
         @Volatile var text: String? = null,
         @Volatile var kind: DocumentKind? = null,
+        /** Set when the document reads like something other than the box it arrived in. */
+        @Volatile var misfiled: String? = null,
     )
 
     /** One line the user may need to answer for. */
@@ -105,18 +109,29 @@ class MonthRoutes(
 
     // ── taking the documents in ──────────────────────────────────────────────────
 
+    /** The upload boxes, and what each one means. */
+    private val BOXES = mapOf(
+        "bankStatements" to DocumentKind.BANK_STATEMENT,
+        "cardStatements" to DocumentKind.CARD_STATEMENT,
+        "purchaseInvoices" to DocumentKind.PURCHASE_INVOICE,
+        "salesInvoices" to DocumentKind.SALES_INVOICE,
+    )
+
     private fun upload(ctx: Context, session: Session) {
-        for (file in ctx.uploadedFiles("files")) {
-            val bytes = file.content().readBytes()
-            val probe = PdfProbe.probe(bytes, file.filename(), store)
-            if (session.docs.containsKey(probe.fileHash)) continue
-            session.docs[probe.fileHash] = Doc(
-                fileName = probe.fileName,
-                bytes = bytes,
-                state = probe.state,
-                password = probe.password,
-                note = probe.detail,
-            )
+        for ((field, kind) in BOXES) {
+            for (file in ctx.uploadedFiles(field)) {
+                val bytes = file.content().readBytes()
+                val probe = PdfProbe.probe(bytes, file.filename(), store)
+                if (session.docs.containsKey(probe.fileHash)) continue
+                session.docs[probe.fileHash] = Doc(
+                    fileName = probe.fileName,
+                    bytes = bytes,
+                    declared = kind,
+                    state = probe.state,
+                    password = probe.password,
+                    note = probe.detail,
+                )
+            }
         }
         clearResults(session)
         ctx.json(fileList(session))
@@ -155,8 +170,10 @@ class MonthRoutes(
                 "fileName" to d.fileName,
                 "state" to d.state.name,
                 "needsPassword" to (d.state == PdfProbe.State.NEEDS_PASSWORD),
-                "kind" to (d.kind?.name ?: ""),
+                "kind" to d.declared.name,
+                "kindLabel" to label(d.declared),
                 "note" to d.note,
+                "misfiled" to (d.misfiled ?: ""),
             )
         },
         "needsPassword" to session.docs.values.count { it.state == PdfProbe.State.NEEDS_PASSWORD },
@@ -189,10 +206,23 @@ class MonthRoutes(
             }
         }
 
+        // The box the document arrived in decides what it is. The classifier still runs, but
+        // only to disagree out loud: a commission invoice dropped into the purchase box
+        // books income as an expense, and that is the kind of mistake nobody notices until
+        // the accountant asks. Warned about, never silently corrected — the user knows what
+        // his own paperwork is, and overruling him would be a worse failure than a warning
+        // he can ignore.
         val texts = session.docs.values.mapNotNull { it.text }
         val ownGstin = DocumentClassifier.ownGstin(texts)
         for (doc in session.docs.values) {
-            doc.kind = doc.text?.let { DocumentClassifier.classify(it, ownGstin) }
+            doc.kind = doc.declared
+            doc.misfiled = null
+            val text = doc.text ?: continue
+            val looksLike = DocumentClassifier.classify(text, ownGstin)
+            if (looksLike != doc.declared) {
+                doc.misfiled = "Filed under ${label(doc.declared)}, but it reads like " +
+                    "${article(looksLike)}. Move it if that is wrong."
+            }
         }
 
         val purchases = mutableListOf<Invoice>()
@@ -421,5 +451,21 @@ class MonthRoutes(
 
     companion object {
         private const val COOKIE = "bk_month"
+
+        /** Names the upload box, so it is plural. */
+        fun label(kind: DocumentKind): String = when (kind) {
+            DocumentKind.BANK_STATEMENT -> "Bank statements"
+            DocumentKind.CARD_STATEMENT -> "Credit card bills"
+            DocumentKind.PURCHASE_INVOICE -> "Purchase bills"
+            DocumentKind.SALES_INVOICE -> "Commission invoices"
+        }
+
+        /** Names one document, for a sentence about the file in front of you. */
+        private fun article(kind: DocumentKind): String = when (kind) {
+            DocumentKind.BANK_STATEMENT -> "a bank statement"
+            DocumentKind.CARD_STATEMENT -> "a credit card bill"
+            DocumentKind.PURCHASE_INVOICE -> "a purchase bill"
+            DocumentKind.SALES_INVOICE -> "a commission invoice"
+        }
     }
 }

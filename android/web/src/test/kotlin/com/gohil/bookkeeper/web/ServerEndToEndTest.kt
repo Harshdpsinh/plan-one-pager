@@ -156,7 +156,10 @@ class ServerEndToEndTest {
         val res = get("/")
         assertEquals(200, res.statusCode())
         assertContains(res.body(), "This month")
-        assertContains(res.body(), "Drop in the month")
+        // One page, but a box per kind of document — the user files his own paperwork and
+        // the classifier only disagrees out loud.
+        assertContains(res.body(), "Bank statements")
+        assertContains(res.body(), "Sale / commission invoices")
     }
 
     @Test

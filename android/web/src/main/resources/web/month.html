@@ -65,6 +65,10 @@
   .tile .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .tile .v { font-size: 21px; font-variant-numeric: tabular-nums; margin-top: 3px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .boxes label { display: block; font-size: 13px; color: var(--ink2); }
+  .boxes input { display: block; margin-top: 6px; width: 100%; background: var(--page);
+                 border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; }
   .done { background: var(--ok-bg); color: var(--ok-ink); }
   a.q { color: var(--muted); font-size: 13px; }
 </style>
@@ -74,14 +78,21 @@
   <p class="sub">Everything in one go. Nothing leaves this computer.</p>
 
   <div class="card">
-    <h2><span class="step">1 ·</span> Drop in the month's paperwork</h2>
-    <div class="row">
-      <input type="file" id="picker" multiple accept=".pdf,.png,.jpg,.jpeg,.webp">
-      <button id="add">Add files</button>
+    <h2><span class="step">1 ·</span> This month's documents</h2>
+    <div class="boxes">
+      <label>Bank statements
+        <input type="file" id="bankStatements" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
+      <label>Credit card bills
+        <input type="file" id="cardStatements" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
+      <label>Purchase bills
+        <input type="file" id="purchaseInvoices" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
+      <label>Sale / commission invoices
+        <input type="file" id="salesInvoices" multiple accept=".pdf,.png,.jpg,.jpeg,.webp"></label>
     </div>
+    <div class="row" style="margin-top:12px"><button id="add">Add files</button></div>
     <p class="hint">
-      Bank statements, credit-card bills, purchase bills, commission invoices — all together.
-      The app works out which is which. Locked files ask for their password once, then remember it.
+      Any number in each box. Locked files ask for their password once, then remember it —
+      including next month's, even though the bank renames and re-encrypts them.
     </p>
     <div id="files" style="margin-top:12px"></div>
   </div>
@@ -151,15 +162,19 @@ function fail(message) {
 
 // ── step 1 ───────────────────────────────────────────────────────────────────
 
+const BOXES = ['bankStatements', 'cardStatements', 'purchaseInvoices', 'salesInvoices'];
+
 $('add').onclick = async () => {
-  const files = $('picker').files;
-  if (!files.length) return;
   const body = new FormData();
-  for (const f of files) body.append('files', f);
+  let n = 0;
+  for (const box of BOXES) {
+    for (const f of $(box).files) { body.append(box, f); n++; }
+  }
+  if (n === 0) { $('readState').textContent = 'Choose some files first.'; return; }
   $('add').disabled = true;
   try {
     renderFiles(await post('/api/month/upload', body));
-    $('picker').value = '';
+    for (const box of BOXES) $(box).value = '';
   } catch (e) { fail(e.message); } finally { $('add').disabled = false; }
 };
 
@@ -170,8 +185,7 @@ function renderFiles(data) {
     const tag =
       f.state === 'NEEDS_PASSWORD' ? '<span class="tag lock">Password needed</span>'
       : f.state === 'UNREADABLE'   ? '<span class="tag bad">Cannot open</span>'
-      : f.kind                     ? `<span class="tag kind">${esc(KIND[f.kind] || f.kind)}</span>`
-      :                              '<span class="tag">Ready</span>';
+      :                              `<span class="tag kind">${esc(f.kindLabel || KIND[f.kind] || f.kind)}</span>`;
     const row = document.createElement('div');
     row.className = 'file';
     row.innerHTML = `
@@ -181,7 +195,15 @@ function renderFiles(data) {
         <button class="small" data-unlock="${f.fileHash}">Unlock</button>` : ''}
       <button class="ghost small" data-remove="${f.fileHash}">Remove</button>`;
     host.appendChild(row);
-    if (f.note) {
+    // A document that reads like something other than the box it went in. Said once, here,
+    // next to the file it is about — not buried in a list at the bottom of the page.
+    if (f.misfiled) {
+      const m = document.createElement('div');
+      m.className = 'note warn';
+      m.style.margin = '4px 0 10px';
+      m.textContent = f.misfiled;
+      host.appendChild(m);
+    } else if (f.note) {
       const n = document.createElement('p');
       n.className = 'hint';
       n.textContent = f.note;
@@ -199,9 +221,13 @@ function renderFiles(data) {
 
   const n = data.files.length;
   $('analyse').disabled = n === 0;
-  $('readState').textContent = n === 0 ? 'Add some files first.'
-    : data.needsPassword > 0 ? `${data.needsPassword} still locked — they will be skipped.`
-    : `${n} document${n === 1 ? '' : 's'} ready.`;
+  if (n > 0 && data.needsPassword === 0 && !$('readState').textContent.startsWith('Read')) {
+    $('readState').textContent = `${n} document${n === 1 ? '' : 's'} ready.`;
+  } else if (n === 0) {
+    $('readState').textContent = 'Add some files first.';
+  } else if (data.needsPassword > 0) {
+    $('readState').textContent = `${data.needsPassword} still locked — they will be skipped.`;
+  }
 }
 
 function form(obj) {
