@@ -1,0 +1,313 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Gohil Bookkeeper — this month</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --ink: #16191d; --ink2: #4a5158; --muted: #767d85;
+    --line: #dfe3e8; --surface: #ffffff; --page: #f3f5f7;
+    --brand: #12503a; --brand-ink: #ffffff;
+    --warn-bg: #fff6e5; --warn-line: #e0b050;
+    --bad-bg: #fdecec; --bad-ink: #a5231f;
+    --ok-bg: #e7f4ec; --ok-ink: #12503a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #eceff2; --ink2: #b9c0c7; --muted: #8d959d;
+      --line: #333a41; --surface: #1b1f24; --page: #121519;
+      --brand: #2f8f66; --brand-ink: #08130e;
+      --warn-bg: #3a2f14; --warn-line: #8a6a20;
+      --bad-bg: #3a1f1e; --bad-ink: #f0a6a3;
+      --ok-bg: #17301f; --ok-ink: #9fe0bb;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 26px 18px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+          padding: 18px 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; letter-spacing: .01em; }
+  .step { color: var(--muted); font-weight: 400; }
+  button { font: inherit; border-radius: 7px; border: 1px solid var(--brand);
+           background: var(--brand); color: var(--brand-ink); padding: 9px 16px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--ink2); border-color: var(--line); }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  input[type=file] { font: inherit; }
+  input[type=password] { font: inherit; padding: 7px 9px; border: 1px solid var(--line);
+                         border-radius: 6px; background: var(--surface); color: var(--ink); }
+  select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+           background: var(--surface); color: var(--ink); min-width: 190px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+  .file { display: flex; align-items: center; gap: 10px; padding: 7px 0;
+          border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .file:last-child { border-bottom: 0; }
+  .name { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+         background: var(--ok-bg); color: var(--ok-ink); white-space: nowrap; }
+  .tag.lock { background: var(--warn-bg); color: var(--ink); }
+  .tag.bad { background: var(--bad-bg); color: var(--bad-ink); }
+  .tag.kind { background: transparent; border: 1px solid var(--line); color: var(--ink2); }
+  .note { border-radius: 8px; padding: 10px 13px; margin-top: 12px; font-size: 14px; }
+  .note.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .note.bad { background: var(--bad-bg); color: var(--bad-ink); }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 4px; }
+  .tile { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
+  .tile .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile .v { font-size: 21px; font-variant-numeric: tabular-nums; margin-top: 3px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .done { background: var(--ok-bg); color: var(--ok-ink); }
+  a.q { color: var(--muted); font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <h1>This month</h1>
+  <p class="sub">Everything in one go. Nothing leaves this computer.</p>
+
+  <div class="card">
+    <h2><span class="step">1 ·</span> Drop in the month's paperwork</h2>
+    <div class="row">
+      <input type="file" id="picker" multiple accept=".pdf,.png,.jpg,.jpeg,.webp">
+      <button id="add">Add files</button>
+    </div>
+    <p class="hint">
+      Bank statements, credit-card bills, purchase bills, commission invoices — all together.
+      The app works out which is which. Locked files ask for their password once, then remember it.
+    </p>
+    <div id="files" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">2 ·</span> Read them</h2>
+    <div class="row">
+      <button id="analyse" disabled>Read the documents</button>
+      <span class="hint" id="readState">Add some files first.</span>
+    </div>
+    <div id="skipped"></div>
+  </div>
+
+  <div class="card" id="reviewCard" hidden>
+    <h2><span class="step">3 ·</span> Only what I could not work out</h2>
+    <p class="hint" id="reviewLead"></p>
+    <div class="scroll"><table id="review"></table></div>
+  </div>
+
+  <div class="card" id="resultCard" hidden>
+    <h2><span class="step">4 ·</span> What the month came to</h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="scroll" style="margin-top:14px"><table id="cats"></table></div>
+  </div>
+
+  <div class="card" id="downloadCard" hidden>
+    <h2><span class="step">5 ·</span> Take it away</h2>
+    <div class="row">
+      <button id="dlExcel">Accountant's workbook (.xlsx)</button>
+      <button id="dlPurchase" class="ghost">Purchases &amp; statements (.zip)</button>
+      <button id="dlSales" class="ghost">Sales invoices (.zip)</button>
+    </div>
+    <p class="hint">
+      The workbook holds the sales register, the purchase register, expenses by category,
+      investments, loans and cash flow. The two bundles are the source documents behind them.
+    </p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (n) => '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const KIND = {
+  BANK_STATEMENT: 'Bank statement',
+  CARD_STATEMENT: 'Credit card',
+  PURCHASE_INVOICE: 'Purchase bill',
+  SALES_INVOICE: 'Commission invoice',
+};
+
+let latest = null;
+
+async function post(url, body) {
+  const res = await fetch(url, { method: 'POST', body });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res.json();
+}
+
+function fail(message) {
+  const box = document.createElement('div');
+  box.className = 'note bad';
+  box.textContent = message;
+  $('skipped').prepend(box);
+}
+
+// ── step 1 ───────────────────────────────────────────────────────────────────
+
+$('add').onclick = async () => {
+  const files = $('picker').files;
+  if (!files.length) return;
+  const body = new FormData();
+  for (const f of files) body.append('files', f);
+  $('add').disabled = true;
+  try {
+    renderFiles(await post('/api/month/upload', body));
+    $('picker').value = '';
+  } catch (e) { fail(e.message); } finally { $('add').disabled = false; }
+};
+
+function renderFiles(data) {
+  const host = $('files');
+  host.innerHTML = '';
+  for (const f of data.files) {
+    const tag =
+      f.state === 'NEEDS_PASSWORD' ? '<span class="tag lock">Password needed</span>'
+      : f.state === 'UNREADABLE'   ? '<span class="tag bad">Cannot open</span>'
+      : f.kind                     ? `<span class="tag kind">${esc(KIND[f.kind] || f.kind)}</span>`
+      :                              '<span class="tag">Ready</span>';
+    const row = document.createElement('div');
+    row.className = 'file';
+    row.innerHTML = `
+      <span class="name">${esc(f.fileName)}</span>${tag}
+      ${f.needsPassword ? `
+        <input type="password" placeholder="Password" data-pw="${f.fileHash}" autocomplete="off">
+        <button class="small" data-unlock="${f.fileHash}">Unlock</button>` : ''}
+      <button class="ghost small" data-remove="${f.fileHash}">Remove</button>`;
+    host.appendChild(row);
+    if (f.note) {
+      const n = document.createElement('p');
+      n.className = 'hint';
+      n.textContent = f.note;
+      host.appendChild(n);
+    }
+  }
+  host.querySelectorAll('[data-unlock]').forEach((b) => b.onclick = () => unlock(b.dataset.unlock));
+  host.querySelectorAll('[data-pw]').forEach((i) => i.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); unlock(i.dataset.pw); }
+  });
+  host.querySelectorAll('[data-remove]').forEach((b) => b.onclick = async () => {
+    try { renderFiles(await post('/api/month/remove', form({ fileHash: b.dataset.remove }))); }
+    catch (e) { fail(e.message); }
+  });
+
+  const n = data.files.length;
+  $('analyse').disabled = n === 0;
+  $('readState').textContent = n === 0 ? 'Add some files first.'
+    : data.needsPassword > 0 ? `${data.needsPassword} still locked — they will be skipped.`
+    : `${n} document${n === 1 ? '' : 's'} ready.`;
+}
+
+function form(obj) {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(obj)) f.append(k, v);
+  return f;
+}
+
+async function unlock(hash) {
+  const pw = document.querySelector(`[data-pw="${hash}"]`);
+  try {
+    const out = await post('/api/month/unlock', form({ fileHash: hash, password: pw.value }));
+    if (!out.ok) { pw.value = ''; pw.placeholder = 'Not that one — try again'; return; }
+    renderFiles({ files: out.files, needsPassword: out.files.filter((f) => f.needsPassword).length });
+  } catch (e) { fail(e.message); }
+}
+
+// ── steps 2 to 5 ─────────────────────────────────────────────────────────────
+
+$('analyse').onclick = async () => {
+  $('analyse').disabled = true;
+  $('readState').textContent = 'Reading…';
+  try {
+    render(await post('/api/month/analyse', new FormData()));
+  } catch (e) { fail(e.message); } finally { $('analyse').disabled = false; }
+};
+
+function render(d) {
+  latest = d;
+  renderFiles({ files: d.files, needsPassword: d.files.filter((f) => f.needsPassword).length });
+
+  $('skipped').innerHTML = (d.skipped || []).length === 0 ? '' :
+    '<div class="note warn">' + d.skipped.map((s) =>
+      `<div><strong>${esc(s.file)}</strong> — ${esc(s.why)}</div>`).join('') + '</div>';
+  $('readState').textContent =
+    `${d.salesRows} sales row${d.salesRows === 1 ? '' : 's'}, ` +
+    `${d.purchaseRows} purchase row${d.purchaseRows === 1 ? '' : 's'}, ` +
+    `${d.spendCount} payments read.`;
+
+  renderReview(d);
+  renderResult(d);
+  $('resultCard').hidden = false;
+  $('downloadCard').hidden = false;
+}
+
+function renderReview(d) {
+  const rows = d.decisions || [];
+  $('reviewCard').hidden = false;
+  $('reviewLead').textContent = rows.length === 0
+    ? 'Nothing needs you — every payment was recognised.'
+    : `${rows.length} payment${rows.length === 1 ? '' : 's'} I could not place, biggest first. ` +
+      'Pick a category and it is remembered for this month.';
+
+  const options = (selected) => d.categories.map((c) =>
+    `<option value="${c.key}"${c.key === selected ? ' selected' : ''}>${esc(c.label)}</option>`).join('');
+
+  $('review').innerHTML = rows.length === 0 ? '' : `
+    <thead><tr>
+      <th>Date</th><th>What it was</th><th>From</th><th class="num">Amount</th><th>Category</th>
+    </tr></thead>
+    <tbody>${rows.map((r) => `
+      <tr data-key="${esc(r.key)}">
+        <td>${esc(r.date)}</td>
+        <td>${esc(r.description)}</td>
+        <td>${esc(r.source)}</td>
+        <td class="num">${money(r.amount)}</td>
+        <td>
+          <select data-choose="${esc(r.key)}">
+            <option value="">— choose —</option>${options(r.suggested)}
+          </select>
+        </td>
+      </tr>`).join('')}</tbody>`;
+
+  $('review').querySelectorAll('[data-choose]').forEach((sel) => sel.onchange = async () => {
+    if (!sel.value) return;
+    sel.disabled = true;
+    try {
+      await post('/api/month/categorise', form({ key: sel.dataset.choose, category: sel.value }));
+      // Re-read so the totals and the remaining list both reflect the decision.
+      render(await post('/api/month/analyse', new FormData()));
+    } catch (e) { fail(e.message); sel.disabled = false; }
+  });
+}
+
+function renderResult(d) {
+  $('tiles').innerHTML = `
+    <div class="tile"><div class="k">Spending</div><div class="v">${money(d.spendTotal)}</div></div>
+    <div class="tile"><div class="k">Payments</div><div class="v">${d.spendCount}</div></div>
+    <div class="tile"><div class="k">Invested</div><div class="v">${money(d.investedTotal)}</div></div>
+    <div class="tile"><div class="k">Sales rows</div><div class="v">${d.salesRows}</div></div>
+    <div class="tile"><div class="k">Purchase rows</div><div class="v">${d.purchaseRows}</div></div>`;
+
+  const cats = d.byCategory || [];
+  const total = Number(d.spendTotal) || 0;
+  $('cats').innerHTML = cats.length === 0 ? '' : `
+    <thead><tr><th>Category</th><th class="num">Total</th><th class="num">Payments</th><th class="num">Share</th></tr></thead>
+    <tbody>${cats.map((c) => `
+      <tr>
+        <td>${esc(c.label)}</td>
+        <td class="num">${money(c.total)}</td>
+        <td class="num">${c.count}</td>
+        <td class="num">${total ? (100 * Number(c.total) / total).toFixed(1) + '%' : '—'}</td>
+      </tr>`).join('')}</tbody>`;
+}
+
+$('dlExcel').onclick = () => location.assign('/api/month/excel');
+$('dlPurchase').onclick = () => location.assign('/api/month/bundle?kind=purchase');
+$('dlSales').onclick = () => location.assign('/api/month/bundle?kind=sales');
+</script>

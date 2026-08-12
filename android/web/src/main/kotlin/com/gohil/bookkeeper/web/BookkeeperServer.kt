@@ -41,6 +41,7 @@ class BookkeeperServer(
     private val sessions = ConcurrentHashMap<String, Session>()
     private val extractor = JvmExtractor()
     private val spend = SpendRoutes(passwordStore, loanRepository, extractor)
+    private val month = MonthRoutes(passwordStore, loanRepository, extractor)
     private var app: Javalin? = null
 
     class Session {
@@ -64,11 +65,16 @@ class BookkeeperServer(
             config.jetty.multipartConfig.maxFileSize(50, io.javalin.config.SizeUnit.MB)
         }.apply {
             before { ctx -> requireToken(ctx) }
-            get("/") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("index.html")) }
+            // The one-page flow is the front door now: one upload box, one review list, and
+            // the three files the month ends with. The two screens below it still work and
+            // still share the same engine, for anyone who wants the steps separately.
+            get("/") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("month.html")) }
+            get("/gst") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("index.html")) }
             get("/spend") { ctx -> ctx.contentType("text/html; charset=utf-8").result(page("spend.html")) }
             post("/api/process") { ctx -> handleProcess(ctx) }
             post("/api/write") { ctx -> handleWrite(ctx) }
             get("/api/download/{key}") { ctx -> handleDownload(ctx) }
+            month.register(this)
             spend.register(
                 app = this,
                 sessionOf = { ctx -> sessionOf(ctx).spend },

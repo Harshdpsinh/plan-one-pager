@@ -28,6 +28,26 @@ enum class SpendCategory(val label: String, val paletteSlot: Int) {
     PERSONAL("Personal", 8),
 
     /**
+     * Premiums paid: motor, health, term, general. A real expense, and for this business a
+     * large one.
+     *
+     * It has no hue of its own. The categorical palette is a validated set of exactly eight,
+     * and a ninth is never a generated colour — so this folds into the chart's neutral
+     * "Other" slice and carries its own line in the legend and the table, where the figure a
+     * chartered accountant needs actually lives.
+     */
+    INSURANCE("Insurance premiums", 0),
+
+    /**
+     * Bought an asset rather than paid for something consumed. Never charted as spending —
+     * the money changed shape, not owner — and reported under investments instead.
+     *
+     * Most investments are recognised before categorisation ever runs, by [InvestmentRules].
+     * This exists so the user can say so about one that was not.
+     */
+    INVESTMENT("Investments", 0),
+
+    /**
      * Money that moved without being spent: a credit-card bill paid from the bank account,
      * a transfer between own accounts, cash taken out.
      *
@@ -237,6 +257,19 @@ class SpendCategorizer(private val rules: List<SpendRule> = defaults()) {
                 ),
                 // Above the generic rules: "ANNUAL FEE" on a card statement is a bank charge
                 // even when the merchant string also mentions the card network.
+                priority = 3,
+            ),
+            SpendRule(
+                SpendCategory.INSURANCE,
+                keywords = listOf(
+                    "insurance premium", "policy premium", "godigit", "go digit", "hdfc ergo",
+                    "icici lombard", "bajaj allianz", "tata aig", "new india assurance",
+                    "united india", "oriental insurance", "star health", "niva bupa",
+                    "care health", "reliance general", "acko", "motor insurance",
+                    "health insurance", "term plan", "renewal premium",
+                ),
+                // Above the generic rules: an insurer's name is specific, and several of
+                // them read as something else in passing ("care", "star").
                 priority = 3,
             ),
             SpendRule(

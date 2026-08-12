@@ -28,6 +28,18 @@ class Pipeline(rules: CategoryRules) {
         /** Statement lines the parser could not resolve; surfaced rather than dropped. */
         val unparsedLines: List<String> = emptyList(),
         val failures: List<ReviewItem> = emptyList(),
+        /**
+         * Whether a debit with no invoice behind it becomes a purchase-register row.
+         *
+         * True is right when statements are uploaded *as* the record of expenses. It is
+         * wrong when they are uploaded so invoices can be matched to their payment: a month
+         * of two bank accounts and six cards then turns 7 real bills into 69 rows, and the
+         * register a chartered accountant reads stops being a list of invoices.
+         *
+         * Nothing is lost when this is false — those payments are the spend analysis, which
+         * is where a card transaction with no tax invoice actually belongs.
+         */
+        val statementLinesBecomeRows: Boolean = true,
     )
 
     fun process(input: Input): ProcessResult {
@@ -121,6 +133,7 @@ class Pipeline(rules: CategoryRules) {
         }
 
         for (txn in purchaseMatch.unmatchedTxns) {
+            if (txn.isDebit && !input.statementLinesBecomeRows) continue
             if (txn.isDebit) {
                 // An unmatched debit is a real expense with no invoice PDF — a bank charge,
                 // an ATM fee, a vendor paid without paperwork. It becomes its own row with

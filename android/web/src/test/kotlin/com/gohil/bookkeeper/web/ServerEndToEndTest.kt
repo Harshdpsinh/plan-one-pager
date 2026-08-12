@@ -146,12 +146,24 @@ class ServerEndToEndTest {
 
     // ── tests ────────────────────────────────────────────────────────────────────
 
+    private fun get(path: String): HttpResponse<String> = client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port$path")).GET().build(),
+        HttpResponse.BodyHandlers.ofString(),
+    )
+
     @Test
-    fun `serves the page`() {
-        val res = client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/")).GET().build(),
-            HttpResponse.BodyHandlers.ofString(),
-        )
+    fun `the front door is the one-page flow`() {
+        val res = get("/")
+        assertEquals(200, res.statusCode())
+        assertContains(res.body(), "This month")
+        assertContains(res.body(), "Drop in the month")
+    }
+
+    @Test
+    fun `the step-by-step GST screen is still served, at its own address`() {
+        // Moving the front door must not take the separate screens away from anyone who
+        // prefers them; they share the same engine either way.
+        val res = get("/gst")
         assertEquals(200, res.statusCode())
         assertContains(res.body(), "Gohil Bookkeeper")
         assertContains(res.body(), "Statement passwords")
