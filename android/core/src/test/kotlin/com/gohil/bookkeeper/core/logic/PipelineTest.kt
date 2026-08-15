@@ -241,6 +241,29 @@ class PipelineTest {
     }
 
     @Test
+    fun `an invoice with a total but no taxable value goes to review, not the register`() {
+        // Airtel's bundled statement scores full confidence — date, number, party, GSTIN and a
+        // printed total are all there — but the total is a net "amount payable" with no taxable
+        // value beside it. Writing it would book a wrong number and three blank tax columns.
+        val noTaxable = Invoice(
+            sourceFile = "airtel.pdf",
+            date = LocalDate.of(2026, 7, 27),
+            gstNo = "24AAACB2894G1ZT",
+            invoiceNo = "HF2724I002324467",
+            partyName = "One Airtel Monthly Statement",
+            totalGrand = BigDecimal("41.55"),
+            rawText = "One Airtel Monthly Statement",
+        )
+        assertTrue(noTaxable.confidence() >= Pipeline.CONFIDENCE_THRESHOLD, "confident on everything but the tax table")
+        val result = pipeline.process(Pipeline.Input(purchaseInvoices = listOf(noTaxable)))
+
+        assertTrue(result.purchaseRows.isEmpty(), "a taxable-less invoice must not be booked")
+        val item = result.review.single()
+        assertEquals(ReviewReason.LOW_CONFIDENCE, item.reason)
+        assertTrue("TAXABLE VALUE" in item.detail, "the review must say why")
+    }
+
+    @Test
     fun `statement lines that could not be resolved are surfaced, not dropped`() {
         val result = pipeline.process(Pipeline.Input(unparsedLines = listOf("12/06/2025 SOMETHING 500.00 700.00")))
         assertEquals(ReviewReason.PARSE_FAILED, result.review.single().reason)

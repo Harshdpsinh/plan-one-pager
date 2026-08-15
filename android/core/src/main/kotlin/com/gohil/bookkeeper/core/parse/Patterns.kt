@@ -39,8 +39,14 @@ object Patterns {
      * match the "1" that begins the line item underneath, so IGST came back as ₹1 and the
      * rate derived from it as 0%.
      */
+    // The `(?:\d{1,2}(?=[ \t(]))?` skips a rate glued straight onto the label. Zoho Invoice
+    // names its taxes "IGST18"/"CGST9", printing "IGST18 (18%) 775.23", and without this the
+    // glued 18 read as the IGST amount — every Beshak bill booked ₹18 of tax instead of ₹775.
+    // The lookahead for a space or "(" is what keeps it off a genuinely glued amount like
+    // "IGST450.00": there the digits run straight into the figure, not into a separator.
     fun taxPattern(label: String): Regex = Regex(
-        """$label[ \t]*(?:\(?[ \t]*@?[ \t]*[\d.]+[ \t]*%[ \t]*\)?)?[ \t]*[:\-]?[ \t]*(?:₹|Rs\.?|INR)?[ \t]*$MONEY""",
+        """$label(?:\d{1,2}(?=[ \t(]))?[ \t]*(?:\(?[ \t]*@?[ \t]*[\d.]+[ \t]*%[ \t]*\)?)?""" +
+            """[ \t]*[:\-]?[ \t]*(?:₹|Rs\.?|INR)?[ \t]*$MONEY""",
         RegexOption.IGNORE_CASE,
     )
 

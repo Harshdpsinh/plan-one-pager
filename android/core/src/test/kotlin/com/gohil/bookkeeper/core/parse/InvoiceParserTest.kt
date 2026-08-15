@@ -70,6 +70,26 @@ class InvoiceParserTest {
     }
 
     @Test
+    fun `bug 1 - a rate glued to the tax label is not read as the amount`() {
+        // Zoho Invoice (Beshak's biller) names taxes "IGST18" and prints "IGST18 (18%) 775.23".
+        // The glued 18 was read as the IGST amount, so every Beshak bill booked Rs 18 of tax.
+        val zoho = """
+            Beshak Solutions Pvt. Ltd.
+            GSTIN 27AAJCB2199P1ZX
+            # Description IGST Amount
+            1 Platform Fees - Fresh 775.23 4,306.86
+            IGST18 (18%) 775.23
+            Total 5,082.00
+        """.trimIndent()
+        val inv = InvoiceParser.parse(zoho, "bes1.pdf")
+        assertEquals(BigDecimal("775.23"), inv.igst)
+        // Same shape for an intra-state bill.
+        val cg = InvoiceParser.parse("V Ltd\nCGST9 (9%) 405.00\nSGST9 (9%) 405.00", "x.pdf")
+        assertEquals(BigDecimal("405.00"), cg.cgst)
+        assertEquals(BigDecimal("405.00"), cg.sgst)
+    }
+
+    @Test
     fun `reads IGST separately from CGST and SGST`() {
         val inv = InvoiceParser.parse(
             "Interstate Vendor Ltd\nTaxable Value: 1000.00\nIGST @ 18%: 180.00\nTotal: 1180.00",

@@ -81,9 +81,25 @@ data class Invoice(
         if (date == null) add("DATE")
         if (invoiceNo == null) add("INVOICE NO")
         if (totalGrand == null) add("TOTAL GRAND")
+        if (taxable == null) add("TAXABLE VALUE")
         if (partyName == null) add("NAME")
         if (partyNameFromFilename) add("NAME (guessed from filename)")
     }
+
+    /**
+     * Whether this invoice may be written to a register without a human first checking it.
+     *
+     * A taxable value is separately mandatory, on top of the [confidence] score. It is the
+     * column a GST return is built from, and an invoice can score full confidence on the
+     * fields around it — date, number, party, and a printed total — while the tax table itself
+     * was never read. Airtel's bundled statement does exactly that: it offers a net
+     * "amount payable" of ₹41.55 (this month's charges less last month's payment) with no
+     * taxable value beside it, and that figure is not what any tax is computed on. Booking it
+     * would put a wrong number and three blank tax columns into the register; the row goes to
+     * review instead, where the real figures can be typed in.
+     */
+    fun readyToWrite(threshold: Double): Boolean =
+        confidence() >= threshold && taxable != null
 }
 
 /** One line off a bank or credit-card statement. */

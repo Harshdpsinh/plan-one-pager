@@ -339,4 +339,46 @@ class BankParserTest {
             "the reference is gone but its separator reached the accountant: '$description'",
         )
     }
+
+    @Test
+    fun `reads a two-column card statement where the transaction shares a line with the summary`() {
+        // RBL prints the account summary and the transaction list side by side, and PDFBox
+        // lays the page out left-to-right, so a summary item and the transaction beside it
+        // arrive on one line. The transaction no longer leads with its date, and every such
+        // row was a debit dropped from the total — the fuel card read a fraction of its own
+        // printed New Debits of 6,843.79. The left prefix is sometimes a figure, sometimes an
+        // offer with no figure at all; both must be stripped back to the transaction.
+        val text = """
+            Total Amount Due PAY NOW 6,793.00 23 Jun 2026 CHITRA TRANSPORT CO 000 404.72
+            Min. Amt. Due 340.00 28 Jun 2026 PLANET PETROLEUM 000 1,046.20
+            1 Jul 2026 Petrol Surcharge Rev on 30-06-2026 10.34
+            5 Jul 2026 CHITRA TRANSPORT CO 000 464.41
+            + Fees & Charges -51.05 13 Jul 2026 PLANET PETROLEUM 000 1,569.30
+            Flat Rs.100 OFF 19 Jul 2026 CHITRA TRANSPORT CO 000 414.83
+        """.trimIndent()
+
+        val result = BankParser.parse(text, StatementSource.CREDIT_CARD)
+        val debits = result.transactions.filter { it.isDebit }
+        assertEquals(
+            BigDecimal("3899.46"),
+            debits.fold(BigDecimal.ZERO) { a, t -> a + t.amount },
+            "every interleaved debit is recovered, whatever sat to its left",
+        )
+        // The reversal keeps its own direction and is not swept in as a purchase.
+        assertTrue(result.transactions.single { it.amount.compareTo(BigDecimal("10.34")) == 0 }.credit != null)
+    }
+
+    @Test
+    fun `does not read a worked example dated years earlier as a transaction`() {
+        // A card's terms print a "Sample Transaction" table whose rows lead with a date just
+        // like a real one, so the date rule cannot exclude them. Their year gives them away.
+        val text = """
+            15 Jul 2026 UPI-BLINKIT COMMERCE 293.00
+            12 Dec 2018 Purchase of Groceries 6,000.00
+            02 Jan 2019 Membership Fee GST 588.82
+        """.trimIndent()
+        val result = BankParser.parse(text, StatementSource.CREDIT_CARD)
+        assertEquals(1, result.transactions.size, "only the July 2026 row is real")
+        assertEquals("293.00", result.transactions.single().amount.toPlainString())
+    }
 }

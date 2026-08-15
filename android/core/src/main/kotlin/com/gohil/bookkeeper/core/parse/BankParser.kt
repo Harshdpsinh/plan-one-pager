@@ -90,7 +90,22 @@ object BankParser {
             )
         }
 
-        return Result(txns, unparsed)
+        return Result(plausibleDates(txns), unparsed)
+    }
+
+    /**
+     * Drops transactions dated far from the rest — a worked example, not real spend.
+     *
+     * A statement covers one cycle, so its transactions cluster inside a few weeks. RBL prints
+     * a "Sample Transaction" table in its terms, and those rows lead with a date the same way a
+     * real one does — "02-Jan-19 Membership Fee + GST 588.82" — so [ROW_START] cannot tell them
+     * apart. Their dates give them away: years before the statement month. Anything more than
+     * [MAX_SPAN_DAYS] before the newest transaction is one of those examples, not a purchase.
+     */
+    private fun plausibleDates(txns: List<BankTxn>): List<BankTxn> {
+        if (txns.size < 2) return txns
+        val cutoff = txns.maxOf { it.date }.minusDays(MAX_SPAN_DAYS)
+        return txns.filter { !it.date.isBefore(cutoff) }
     }
 
     // ── finding the rows ─────────────────────────────────────────────────────────
@@ -121,22 +136,67 @@ object BankParser {
      * problem the user reports, while invented rows are a problem nobody notices until the
      * CA asks about them. Widen this pattern when a real statement needs it.
      */
-    private val ROW_START = Regex(
-        """^(?:\d{1,3}\s+)?(?:""" +
-            """\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}""" +
+    /** The three date shapes a statement row can begin with, shared by the patterns below. */
+    private const val DATE_BODY =
+        """\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}""" +
             """|\d{4}-\d{2}-\d{2}""" +
-            """|\d{1,2}[\-\s](?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\-\s,]*\d{2,4}""" +
-            """)\b""",
+            """|\d{1,2}[\-\s](?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\-\s,]*\d{2,4}"""
+
+    private val ROW_START = Regex(
+        """^(?:\d{1,3}\s+)?(?:$DATE_BODY)\b""",
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * A transaction glued to the right of a left-column summary item, on a two-column card
+     * statement.
+     *
+     * RBL prints the account summary and the transaction list side by side, and PDFBox lays
+     * the page out left-to-right, so a summary line and the transaction beside it arrive as one
+     * line: `Total Amount Due PAY NOW 6,793.00 23 Jun 2026 CHITRA TRANSPORT 404.72`. The row no
+     * longer begins with its date, so [ROW_START] skips it — and every such row was a debit
+     * dropped from the total, which is why the card read ₹469 against its own printed ₹6,843.79.
+     *
+     * The signature is narrow on purpose: a full date, mid-line, followed by a description that
+     * ends the line in an amount stated to the paise. The left prefix is whatever the summary
+     * column happened to print — a figure ("6,793.00"), or an offer ("Flat Rs.100 OFF") — so it
+     * is not required to be anything in particular. A marketing line dates itself as "31st July"
+     * with no year and does not match; a summary line that ends in a date carries no trailing
+     * figure and does not match; a transaction that already leads with its date is handled the
+     * normal way and never reaches here. Worked examples in the terms can match this shape, but
+     * they are dated years back and [plausibleDates] drops them. It runs on card statements
+     * alone, so the bank parsers are untouched.
+     */
+    private val CARD_INTERLEAVE = Regex(
+        """\b((?:$DATE_BODY)\b.*\d[.,]\d{2})\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Recovers the transaction hiding after a left-column summary item; see [CARD_INTERLEAVE]. */
+    private fun deInterleave(line: String, source: StatementSource): String {
+        if (source != StatementSource.CREDIT_CARD || ROW_START.containsMatchIn(line)) return line
+        return CARD_INTERLEAVE.find(line)?.groupValues?.get(1) ?: line
+    }
+
     private fun rows(lines: List<String>, source: StatementSource): List<Row> {
-        val clean = lines.map { it.trim().replace(Regex("""\s+"""), " ") }
+        val clean = lines.map { deInterleave(it.trim().replace(Regex("""\s+"""), " "), source) }
         val out = ArrayList<Row>()
         var i = 0
 
         while (i < clean.size) {
             if (!ROW_START.containsMatchIn(clean[i])) {
+                i++
+                continue
+            }
+
+            // A card transaction is one self-contained line: date, description and amount,
+            // with no wrapped figures. The label-above and continuation machinery below is a
+            // bank-statement mechanism, and on a two-column card layout it does harm rather
+            // than good — the line above and below the transaction are the neighbouring
+            // summary column, and absorbing "Payments & Credits" turned a ₹2,549 purchase
+            // into a credit. So a card row is exactly its own line and nothing more.
+            if (source == StatementSource.CREDIT_CARD) {
+                out.add(Row(raw = clean[i], money = clean[i], text = clean[i]))
                 i++
                 continue
             }
@@ -457,6 +517,12 @@ object BankParser {
 
     /** How many wrapped lines belong to one row. Four covers every layout checked. */
     private const val CONTINUATION = 4
+
+    /**
+     * How far before the newest transaction a date can still be a real one. A statement spans a
+     * single cycle; a row dated further back is a worked example. See [plausibleDates].
+     */
+    private const val MAX_SPAN_DAYS = 120L
 
     /** Longest line above a row still treated as its column label rather than as prose. */
     private const val LABEL_ABOVE = 25

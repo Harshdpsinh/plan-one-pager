@@ -76,7 +76,7 @@ class Pipeline(rules: CategoryRules) {
                 gstType = categorizer.gstType(invoice.partyName),
                 provenance = invoice.sourceFile,
             )
-            if (invoice.confidence() < CONFIDENCE_THRESHOLD) {
+            if (!invoice.readyToWrite(CONFIDENCE_THRESHOLD)) {
                 review += ReviewItem(
                     sourceFile = invoice.sourceFile,
                     reason = ReviewReason.LOW_CONFIDENCE,
@@ -112,7 +112,7 @@ class Pipeline(rules: CategoryRules) {
                 provenance = invoice.sourceFile,
             )
             when {
-                invoice.confidence() < CONFIDENCE_THRESHOLD -> review += ReviewItem(
+                !invoice.readyToWrite(CONFIDENCE_THRESHOLD) -> review += ReviewItem(
                     sourceFile = invoice.sourceFile,
                     reason = ReviewReason.LOW_CONFIDENCE,
                     detail = "Could not read: ${invoice.missingFields().joinToString(", ")}",
